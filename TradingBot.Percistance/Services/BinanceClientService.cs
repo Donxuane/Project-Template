@@ -43,7 +43,6 @@ public class BinanceClientService : IBinanceClientService
                 p => p.GetValue(request)!.ToString()!
             );
 
-
         string queryString = string.Join("&", requestDict.Select(kv => $"{kv.Key}={kv.Value}"));
 
 
