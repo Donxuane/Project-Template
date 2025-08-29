@@ -4,5 +4,5 @@ namespace TradingBot.Domain.Interfaces.Services;
 
 public interface IBinanceClientService
 {
-    public Task<TResponse> Call<TResponse, TRequest>(TRequest? request, Endpoint endpoint);
+    public Task<TResponse> Call<TResponse, TRequest>(TRequest? request, Endpoint endpoint, bool enableSignature);
 }

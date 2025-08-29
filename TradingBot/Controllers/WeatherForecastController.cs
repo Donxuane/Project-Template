@@ -5,6 +5,11 @@ using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models;
 using TradingBot.Domain.Models.AccountInformation;
 using TradingBot.Domain.Models.GeneralApis;
+using TradingBot.Domain.Enums;
+using TradingBot.Domain.Enums.Endpoints;
+using TradingBot.Domain.Models.TradingEndpoints;
+using TradingBot.Domain.Enums.Binance;
+using OrderResponse = TradingBot.Domain.Models.TradingEndpoints.OrderResponse;
 
 namespace TradingBot.Controllers
 {
@@ -22,7 +27,7 @@ namespace TradingBot.Controllers
         private readonly IBinanceSettingsService _settings;
         private readonly IBinanceClientService _client;
 
-        public WeatherForecastController(ILogger<WeatherForecastController> logger, 
+        public WeatherForecastController(ILogger<WeatherForecastController> logger,
             IBinanceEndpointsService service,
             IBinanceSettingsService settings,
             IBinanceClientService client)
@@ -48,12 +53,35 @@ namespace TradingBot.Controllers
         public async Task<ActionResult> GetAction()
         {
             var serverTime = _service.GetEndpoint(Domain.Enums.Endpoints.GeneralApis.CheckServerTime);
-            var result = _client.Call<ServerTimeResponse,EmptyResult>(null, serverTime);
-            var exchange = _service.GetEndpoint(Domain.Enums.Endpoints.Account.AccoutnInformation);
-            var request = new AccountInfoRequest {
-            RecvWindow = 10000,Timestamp = result.Result.ServerTime};
-            var response = await _client.Call<AccountInfoResponse,AccountInfoRequest>(request, exchange);
+            var result = _client.Call<ServerTimeResponse, EmptyResult>(null, serverTime, false);
+            var exchange = _service.GetEndpoint(Account.AccoutnInformation);
+            var request = new AccountInfoRequest
+            {
+                RecvWindow = 10000,
+                Timestamp = result.Result.ServerTime,
+                OmitZeroBalances = false
+            };
+            var response = await _client.Call<AccountInfoResponse, AccountInfoRequest>(request, exchange, true);
             return Ok(new { response });
         }
+
+        [HttpPost("Make an order")]
+        public async Task<ActionResult> MakeAnOrder()
+        {
+            var checkServerTimeEndpoint = _service.GetEndpoint(GeneralApis.CheckServerTime);
+            var serverTime = await _client.Call<ServerTimeResponse, EmptyResult>(null, checkServerTimeEndpoint, false);
+            var newMarketOrder = new NewOrderRequest
+            {
+                Symbol = TradingSymbol.BTCUSDT.ToString(),
+                Side = OrderSide.SELL,
+                Type = OrderTypes.MARKET,
+                Quantity = 0.1m,
+                Timestamp = serverTime.ServerTime
+            };
+            var newOrderEndpoint = _service.GetEndpoint(Trading.NewOrder);
+            var order = await _client.Call<OrderResponse, NewOrderRequest>(newMarketOrder, newOrderEndpoint, true);
+            return Ok(order);
+        }
+
     }
 }

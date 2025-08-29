@@ -27,7 +27,7 @@ public class BinanceClientService : IBinanceClientService
         _httpClient.BaseAddress = new Uri(baseUrl);
         _httpClient.DefaultRequestHeaders.Add("X-MBX-APIKEY", _apiKey);
     }
-    public async Task<TResponse> Call<TResponse, TRequest>(TRequest? request, Endpoint endpoint)
+    public async Task<TResponse> Call<TResponse, TRequest>(TRequest? request, Endpoint endpoint, bool enableSignature)
     {
         if (string.IsNullOrWhiteSpace(endpoint.API))
             throw new ArgumentException("Endpoint API path is missing");
@@ -40,13 +40,21 @@ public class BinanceClientService : IBinanceClientService
             .ToDictionary(
                 p => p.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name
                      ?? char.ToLowerInvariant(p.Name[0]) + p.Name.Substring(1),
-                p => p.GetValue(request)!.ToString()!
+                p =>
+                {
+                    var value = p.GetValue(request);
+                    if(value is bool val)
+                    {
+                        return val.ToString().ToLower();
+                    }
+                    return value.ToString()!;
+                }
             );
 
         string queryString = string.Join("&", requestDict.Select(kv => $"{kv.Key}={kv.Value}"));
 
 
-        if (request != null)
+        if (enableSignature)
         {
             string signature = CreateSignature(queryString);
             queryString += $"&signature={signature}";
@@ -67,6 +75,18 @@ public class BinanceClientService : IBinanceClientService
             var content = new StringContent(queryString, Encoding.UTF8, "application/x-www-form-urlencoded");
             response = await _httpClient.PostAsync(endpoint.API, content);
         }
+        else if (endpoint.Type?.Equals("DELETE", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var fullUrl = string.IsNullOrEmpty(queryString)
+                ? endpoint.API
+                : $"{endpoint.API}?{queryString}";
+            response = await _httpClient.DeleteAsync(fullUrl);
+        }
+        else if(endpoint.Type?.Equals("PUT",StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var content = new StringContent(queryString, Encoding.UTF8, "application/x-www-form-urlencoded");
+            response = await _httpClient.PutAsync(endpoint.API, content);
+        }
         else
         {
             throw new NotSupportedException($"HTTP method {endpoint.Request} not supported");
@@ -86,7 +106,7 @@ public class BinanceClientService : IBinanceClientService
 
         return result;
     }
-    static string CreateSignature(string queryString)
+    public static string CreateSignature(string queryString)
     {
         byte[] keyBytes = Encoding.UTF8.GetBytes(_secretKey);
         byte[] queryBytes = Encoding.UTF8.GetBytes(queryString);
