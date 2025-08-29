@@ -1,0 +1,12 @@
+C:\Users\vakho\Desktop\ProjectTemplate\TradingBot\TradingBot.Shared\bin\Debug\net8.0\TradingBot.Shared.deps.json
+C:\Users\vakho\Desktop\ProjectTemplate\TradingBot\TradingBot.Shared\bin\Debug\net8.0\TradingBot.Shared.dll
+C:\Users\vakho\Desktop\ProjectTemplate\TradingBot\TradingBot.Shared\bin\Debug\net8.0\TradingBot.Shared.pdb
+C:\Users\vakho\Desktop\ProjectTemplate\TradingBot\TradingBot.Shared\obj\Debug\net8.0\TradingBot.Shared.csproj.AssemblyReference.cache
+C:\Users\vakho\Desktop\ProjectTemplate\TradingBot\TradingBot.Shared\obj\Debug\net8.0\TradingBot.Shared.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\vakho\Desktop\ProjectTemplate\TradingBot\TradingBot.Shared\obj\Debug\net8.0\TradingBot.Shared.AssemblyInfoInputs.cache
+C:\Users\vakho\Desktop\ProjectTemplate\TradingBot\TradingBot.Shared\obj\Debug\net8.0\TradingBot.Shared.AssemblyInfo.cs
+C:\Users\vakho\Desktop\ProjectTemplate\TradingBot\TradingBot.Shared\obj\Debug\net8.0\TradingBot.Shared.csproj.CoreCompileInputs.cache
+C:\Users\vakho\Desktop\ProjectTemplate\TradingBot\TradingBot.Shared\obj\Debug\net8.0\TradingBot.Shared.dll
+C:\Users\vakho\Desktop\ProjectTemplate\TradingBot\TradingBot.Shared\obj\Debug\net8.0\refint\TradingBot.Shared.dll
+C:\Users\vakho\Desktop\ProjectTemplate\TradingBot\TradingBot.Shared\obj\Debug\net8.0\TradingBot.Shared.pdb
+C:\Users\vakho\Desktop\ProjectTemplate\TradingBot\TradingBot.Shared\obj\Debug\net8.0\ref\TradingBot.Shared.dll
