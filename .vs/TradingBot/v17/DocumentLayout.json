@@ -1,0 +1,173 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\vakho\\Desktop\\Bottt\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{DB8BA4D7-8746-49B7-B7D8-A95A913C30BE}|TradingBot\\TradingBot.csproj|c:\\users\\vakho\\desktop\\bottt\\tradingbot\\controllers\\weatherforecastcontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{DB8BA4D7-8746-49B7-B7D8-A95A913C30BE}|TradingBot\\TradingBot.csproj|solutionrelative:tradingbot\\controllers\\weatherforecastcontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}|TradingBot.Shared\\TradingBot.Shared.csproj|c:\\users\\vakho\\desktop\\bottt\\tradingbot.shared\\shared\\models\\ratelimittersettings.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}|TradingBot.Shared\\TradingBot.Shared.csproj|solutionrelative:tradingbot.shared\\shared\\models\\ratelimittersettings.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}|TradingBot.Shared\\TradingBot.Shared.csproj|c:\\users\\vakho\\desktop\\bottt\\tradingbot.shared\\shared\\models\\endpoint.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}|TradingBot.Shared\\TradingBot.Shared.csproj|solutionrelative:tradingbot.shared\\shared\\models\\endpoint.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}|TradingBot.Shared\\TradingBot.Shared.csproj|c:\\users\\vakho\\desktop\\bottt\\tradingbot.shared\\shared\\settings\\jsonreader.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}|TradingBot.Shared\\TradingBot.Shared.csproj|solutionrelative:tradingbot.shared\\shared\\settings\\jsonreader.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}|TradingBot.Shared\\TradingBot.Shared.csproj|c:\\users\\vakho\\desktop\\bottt\\tradingbot.shared\\shared\\settings\\stringornumberconverter.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}|TradingBot.Shared\\TradingBot.Shared.csproj|solutionrelative:tradingbot.shared\\shared\\settings\\stringornumberconverter.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{08149238-0350-4268-A574-EC3258B64DCA}|TradingBot.Domain\\TradingBot.Domain.csproj|c:\\users\\vakho\\desktop\\bottt\\tradingbot.domain\\models\\accountinformation\\accountinforequest.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{08149238-0350-4268-A574-EC3258B64DCA}|TradingBot.Domain\\TradingBot.Domain.csproj|solutionrelative:tradingbot.domain\\models\\accountinformation\\accountinforequest.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}|TradingBot.Shared\\TradingBot.Shared.csproj|c:\\users\\vakho\\desktop\\bottt\\tradingbot.shared\\shared\\settings\\lowercasejsonconverter.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}|TradingBot.Shared\\TradingBot.Shared.csproj|solutionrelative:tradingbot.shared\\shared\\settings\\lowercasejsonconverter.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{CCED6AF1-4FCC-4C6C-B238-04EC0B510290}|TradingBot.Percistance\\TradingBot.Percistance.csproj|c:\\users\\vakho\\desktop\\bottt\\tradingbot.percistance\\configuration\\configuration.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{CCED6AF1-4FCC-4C6C-B238-04EC0B510290}|TradingBot.Percistance\\TradingBot.Percistance.csproj|solutionrelative:tradingbot.percistance\\configuration\\configuration.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{DB8BA4D7-8746-49B7-B7D8-A95A913C30BE}|TradingBot\\TradingBot.csproj|c:\\users\\vakho\\desktop\\bottt\\tradingbot\\platformsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}",
+      "RelativeMoniker": "D:0:0:{DB8BA4D7-8746-49B7-B7D8-A95A913C30BE}|TradingBot\\TradingBot.csproj|solutionrelative:tradingbot\\platformsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 0,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "WeatherForecastController.cs",
+              "DocumentMoniker": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot\\Controllers\\WeatherForecastController.cs",
+              "RelativeDocumentMoniker": "TradingBot\\Controllers\\WeatherForecastController.cs",
+              "ToolTip": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot\\Controllers\\WeatherForecastController.cs",
+              "RelativeToolTip": "TradingBot\\Controllers\\WeatherForecastController.cs",
+              "ViewState": "AgIAACoAAAAAAAAAAAAowAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-08-29T08:56:45.879Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "RateLimitterSettings.cs",
+              "DocumentMoniker": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Shared\\Shared\\Models\\RateLimitterSettings.cs",
+              "RelativeDocumentMoniker": "TradingBot.Shared\\Shared\\Models\\RateLimitterSettings.cs",
+              "ToolTip": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Shared\\Shared\\Models\\RateLimitterSettings.cs",
+              "RelativeToolTip": "TradingBot.Shared\\Shared\\Models\\RateLimitterSettings.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-08-29T08:56:39.26Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "Endpoint.cs",
+              "DocumentMoniker": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Shared\\Shared\\Models\\Endpoint.cs",
+              "RelativeDocumentMoniker": "TradingBot.Shared\\Shared\\Models\\Endpoint.cs",
+              "ToolTip": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Shared\\Shared\\Models\\Endpoint.cs",
+              "RelativeToolTip": "TradingBot.Shared\\Shared\\Models\\Endpoint.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-08-29T08:56:37.509Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "JsonReader.cs",
+              "DocumentMoniker": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Shared\\Shared\\Settings\\JsonReader.cs",
+              "RelativeDocumentMoniker": "TradingBot.Shared\\Shared\\Settings\\JsonReader.cs",
+              "ToolTip": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Shared\\Shared\\Settings\\JsonReader.cs",
+              "RelativeToolTip": "TradingBot.Shared\\Shared\\Settings\\JsonReader.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-08-29T08:56:04.202Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "StringOrNumberConverter.cs",
+              "DocumentMoniker": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Shared\\Shared\\Settings\\StringOrNumberConverter.cs",
+              "RelativeDocumentMoniker": "TradingBot.Shared\\Shared\\Settings\\StringOrNumberConverter.cs",
+              "ToolTip": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Shared\\Shared\\Settings\\StringOrNumberConverter.cs",
+              "RelativeToolTip": "TradingBot.Shared\\Shared\\Settings\\StringOrNumberConverter.cs",
+              "ViewState": "AgIAAAkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-08-29T08:56:27.012Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "AccountInfoRequest.cs",
+              "DocumentMoniker": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Domain\\Models\\AccountInformation\\AccountInfoRequest.cs",
+              "RelativeDocumentMoniker": "TradingBot.Domain\\Models\\AccountInformation\\AccountInfoRequest.cs",
+              "ToolTip": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Domain\\Models\\AccountInformation\\AccountInfoRequest.cs",
+              "RelativeToolTip": "TradingBot.Domain\\Models\\AccountInformation\\AccountInfoRequest.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-08-29T08:56:16.761Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
+              "Title": "LowerCaseJsonConverter.cs",
+              "DocumentMoniker": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Shared\\Shared\\Settings\\LowerCaseJsonConverter.cs",
+              "RelativeDocumentMoniker": "TradingBot.Shared\\Shared\\Settings\\LowerCaseJsonConverter.cs",
+              "ToolTip": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Shared\\Shared\\Settings\\LowerCaseJsonConverter.cs",
+              "RelativeToolTip": "TradingBot.Shared\\Shared\\Settings\\LowerCaseJsonConverter.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-08-29T08:56:04.521Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 7,
+              "Title": "Configuration.cs",
+              "DocumentMoniker": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Percistance\\Configuration\\Configuration.cs",
+              "RelativeDocumentMoniker": "TradingBot.Percistance\\Configuration\\Configuration.cs",
+              "ToolTip": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot.Percistance\\Configuration\\Configuration.cs",
+              "RelativeToolTip": "TradingBot.Percistance\\Configuration\\Configuration.cs",
+              "ViewState": "AgIAAAoAAAAAAAAAAAAgwBAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-08-29T08:55:38.115Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 8,
+              "Title": "platformSettings.json",
+              "DocumentMoniker": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot\\platformSettings.json",
+              "RelativeDocumentMoniker": "TradingBot\\platformSettings.json",
+              "ToolTip": "C:\\Users\\vakho\\Desktop\\Bottt\\TradingBot\\platformSettings.json",
+              "RelativeToolTip": "TradingBot\\platformSettings.json",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABMAAAAFAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
+              "WhenOpened": "2025-08-29T08:54:47.915Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
