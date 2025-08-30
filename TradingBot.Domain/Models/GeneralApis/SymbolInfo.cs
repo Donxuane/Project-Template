@@ -21,7 +21,7 @@ public class SymbolInfo
     public bool PegInstructionsAllowed { get; set; }
     public bool IsSpotTradingAllowed { get; set; }
     public bool IsMarginTradingAllowed { get; set; }
-    public List<object> Filters { get; set; }
+    public List<Filter> Filters { get; set; }
     public List<string> Permissions { get; set; }
     public List<List<string>> PermissionSets { get; set; }
     public string DefaultSelfTradePreventionMode { get; set; }

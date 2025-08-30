@@ -4,5 +4,5 @@ public enum FilterTypes
 {
     PRICE_FILTER,
     LOT_SIZE,
-    MIN_NOTIONAL
+    NOTIONAL
 }

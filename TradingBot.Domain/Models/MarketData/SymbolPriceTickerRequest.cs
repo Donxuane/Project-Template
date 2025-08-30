@@ -2,6 +2,6 @@
 
 public class SymbolPriceTickerRequest
 {
-    public string Symbol { get; set; }
-    public List<string> Symbols { get; set; }
+    public string? Symbol { get; set; }
+    public List<string>? Symbols { get; set; }
 }

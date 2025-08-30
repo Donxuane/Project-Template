@@ -1,8 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using System.Runtime.InteropServices;
-using System.Threading.Tasks;
-using TradingBot.Domain.Interfaces.Services;
-using TradingBot.Domain.Models;
 using TradingBot.Domain.Models.AccountInformation;
 using TradingBot.Domain.Models.GeneralApis;
 using TradingBot.Domain.Enums;
@@ -10,6 +6,9 @@ using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Models.TradingEndpoints;
 using TradingBot.Domain.Enums.Binance;
 using OrderResponse = TradingBot.Domain.Models.TradingEndpoints.OrderResponse;
+using TradingBot.Domain.Models.MarketData;
+using TradingBot.Domain.Interfaces.ExternalServices;
+using System.Net.WebSockets;
 
 namespace TradingBot.Controllers
 {
@@ -26,16 +25,22 @@ namespace TradingBot.Controllers
         private readonly IBinanceEndpointsService _service;
         private readonly IBinanceSettingsService _settings;
         private readonly IBinanceClientService _client;
+        private readonly ISlicerService _slicer;
+        private readonly IMemoryCacheService _cache;
 
         public WeatherForecastController(ILogger<WeatherForecastController> logger,
             IBinanceEndpointsService service,
             IBinanceSettingsService settings,
-            IBinanceClientService client)
+            IBinanceClientService client,
+            ISlicerService slicer,
+            IMemoryCacheService cache)
         {
             _logger = logger;
             _service = service;
             _settings = settings;
             _client = client;
+            _slicer = slicer;
+            _cache = cache;
         }
 
         [HttpGet(Name = "GetWeatherForecast")]
@@ -83,5 +88,63 @@ namespace TradingBot.Controllers
             return Ok(order);
         }
 
+        [HttpGet("exchangeInformation")]
+        public async Task<ActionResult> GetExchangeInformation()
+        {
+            var endpoint = _service.GetEndpoint(GeneralApis.ExchangeInformation);
+            var result = await _client.Call<ExchangeInfoResponse, CurrencyPairs>(
+                new CurrencyPairs
+                {
+                    Symbol = TradingSymbol.BTCUSDT.ToString()
+                }, endpoint, false);
+            return Ok(result);
+        }
+
+        [HttpGet("AssetPortion")]
+        public async Task<ActionResult> GetCurrentPrice(decimal price)
+        {
+            var endpoint = _service.GetEndpoint(MarketData.SymbolPriceTicker);
+            var result = await _client.Call<SymbolPriceTickerResponse, SymbolPriceTickerRequest>(new SymbolPriceTickerRequest
+            {
+                Symbol = TradingSymbol.BTCUSDT.ToString()
+            }, endpoint, false);
+            var slice = _slicer.GetSliceAmount(result, price);
+            return Ok(slice);
+        }
+
+        [HttpPost("cacheData")]
+        public ActionResult CacheData(string name, int age)
+        {
+            var key = $"{name}_{age}";
+            _cache.SetCacheValue(key, new { name, age });
+            return Ok(key);
+        }
+
+        [HttpGet("getCacheData")]
+        public ActionResult GetCachedData(string key)
+        {
+            var value = _cache.GetCacheValue(key);
+            return Ok(value);
+        }
+        [HttpDelete("removeCacheData")]
+        public ActionResult RemoveCachedData(string key)
+        {
+            _cache.RemoveCacheValue(key);
+            return Ok();
+        }
+
+        [HttpGet("RateLimits")]
+        public async Task<ActionResult> RateLimits()
+        {
+            var result = await _settings.GetRateLimitterSettings(RateLimitType.REQUEST_WEIGHT, TradingSymbol.BTCUSDT);
+            return Ok(result);
+        }
+
+        [HttpGet("PriceValidator")]
+        public async Task<ActionResult> ValidatePrice(decimal price)
+        {
+            var result = await _settings.ValidatePrice(TradingSymbol.BTCUSDT, price);
+            return Ok(result);
+        }
     }
 }
