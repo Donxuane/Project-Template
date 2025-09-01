@@ -1,6 +1,6 @@
 ﻿using TradingBot.Domain.Models.MarketData;
 
-namespace TradingBot.Domain.Interfaces.ExternalServices;
+namespace TradingBot.Domain.Interfaces.Services;
 
 public interface ISlicerService
 {

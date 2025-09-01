@@ -5,10 +5,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using TradingBot.Domain.Interfaces.ExternalServices;
+using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Shared.Shared.Models;
 
-namespace TradingBot.Percistance.ExternalServices;
+namespace TradingBot.Percistance.Services;
 
 public class BinanceClientService : IBinanceClientService
 {

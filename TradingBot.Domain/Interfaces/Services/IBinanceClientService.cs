@@ -1,6 +1,6 @@
 ﻿using TradingBot.Shared.Shared.Models;
 
-namespace TradingBot.Domain.Interfaces.ExternalServices;
+namespace TradingBot.Domain.Interfaces.Services;
 
 public interface IBinanceClientService
 {

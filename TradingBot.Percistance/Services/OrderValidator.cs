@@ -1,4 +1,4 @@
-﻿using TradingBot.Domain.Interfaces.ExternalServices;
+﻿using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models;
 
 namespace TradingBot.Percistance.Services;

@@ -1,6 +1,6 @@
 ﻿using TradingBot.Domain.Models;
 
-namespace TradingBot.Domain.Interfaces.ExternalServices;
+namespace TradingBot.Domain.Interfaces.Services;
 
 public interface IOrderValidator
 {

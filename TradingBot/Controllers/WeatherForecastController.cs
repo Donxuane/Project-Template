@@ -7,8 +7,8 @@ using TradingBot.Domain.Models.TradingEndpoints;
 using TradingBot.Domain.Enums.Binance;
 using OrderResponse = TradingBot.Domain.Models.TradingEndpoints.OrderResponse;
 using TradingBot.Domain.Models.MarketData;
-using TradingBot.Domain.Interfaces.ExternalServices;
 using System.Net.WebSockets;
+using TradingBot.Domain.Interfaces.Services;
 
 namespace TradingBot.Controllers
 {

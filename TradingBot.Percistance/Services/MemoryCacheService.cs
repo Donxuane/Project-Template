@@ -1,8 +1,8 @@
 ﻿using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
-using TradingBot.Domain.Interfaces.ExternalServices;
+using TradingBot.Domain.Interfaces.Services;
 
-namespace TradingBot.Percistance.ExternalServices;
+namespace TradingBot.Percistance.Services;
 
 public class MemoryCacheService(IMemoryCache _cache, ILogger<MemoryCacheService> logger) : IMemoryCacheService
 {

@@ -1,9 +1,9 @@
 ﻿using Microsoft.Extensions.Configuration;
 using TradingBot.Domain.Enums.Endpoints;
-using TradingBot.Domain.Interfaces.ExternalServices;
+using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Shared.Shared.Models;
 
-namespace TradingBot.Percistance.ExternalServices;
+namespace TradingBot.Percistance.Services;
 
 public class BinanceEndpointService(IConfiguration configuration) : IBinanceEndpointsService
 {

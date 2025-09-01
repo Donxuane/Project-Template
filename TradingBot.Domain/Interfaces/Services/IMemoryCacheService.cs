@@ -1,4 +1,4 @@
-﻿namespace TradingBot.Domain.Interfaces.ExternalServices;
+﻿namespace TradingBot.Domain.Interfaces.Services;
 
 public interface IMemoryCacheService
 {

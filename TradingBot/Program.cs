@@ -1,3 +1,4 @@
+using TradingBot.Application.Configuration;
 using TradingBot.Configuration;
 using TradingBot.Percistance.Configuration;
 
@@ -10,6 +11,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.LoggerConfigure();
 builder.Services.ConfigureServices();
+builder.Services.ConfigApplication();
 
 var app = builder.Build();
 

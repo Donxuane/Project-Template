@@ -4,12 +4,12 @@ using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
 using TradingBot.Domain.Enums.Endpoints;
-using TradingBot.Domain.Interfaces.ExternalServices;
+using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models;
 using TradingBot.Domain.Models.GeneralApis;
 using TradingBot.Domain.Models.MarketData;
 
-namespace TradingBot.Percistance.ExternalServices;
+namespace TradingBot.Percistance.Services;
 
 public class BinanceSettingsService(
     ISlicerService slicerService, 

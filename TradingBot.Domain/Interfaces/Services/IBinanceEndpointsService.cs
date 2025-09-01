@@ -1,7 +1,7 @@
 ﻿using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Shared.Shared.Models;
 
-namespace TradingBot.Domain.Interfaces.ExternalServices;
+namespace TradingBot.Domain.Interfaces.Services;
 
 public interface IBinanceEndpointsService
 {
