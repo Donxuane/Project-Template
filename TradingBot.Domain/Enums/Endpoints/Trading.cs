@@ -11,5 +11,6 @@ public enum Trading
     NewOrderList_OCO,
     CancelOrderList,
     NewOrderList_OTO,
-    NewOrderList_OTOCO
+    NewOrderList_OTOCO,
+    QueryOpenOrders
 }

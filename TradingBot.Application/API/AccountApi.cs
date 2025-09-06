@@ -7,7 +7,7 @@ using TradingBot.Domain.Models.GeneralApis;
 
 namespace TradingBot.Application.API;
 
-public class Api(IToolService toolService, ILogger<Api> logger)
+public class AccountApi(IToolService toolService, ILogger<AccountApi> logger)
 {
     public async Task<AccountInfoResponse>? GetAccountInformation(bool omitZeroBalances)
     {
@@ -41,7 +41,7 @@ public class Api(IToolService toolService, ILogger<Api> logger)
                 ex.Message,
                 DateTime.Now
             );
-            throw;
+            return null;
         }
     }
 }

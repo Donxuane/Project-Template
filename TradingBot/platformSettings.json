@@ -132,6 +132,12 @@
       "request": "QueryOrderRequest",
       "response": "OrderResponse"
     },
+    "QueryOpenOrders": {
+      "api": "/api/v3/openOrders",
+      "type": "GET",
+      "request": "TradingSymbol",
+      "response": "object"
+    },
     "CancelOrder": {
       "api": "/api/v3/order",
       "type": "DELETE",

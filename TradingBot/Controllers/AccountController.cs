@@ -5,7 +5,7 @@ namespace TradingBot.Controllers;
 
 [ApiController]
 [Route("[controller]")]
-public class ApiController(Api api) : ControllerBase
+public class AccountController(AccountApi api) : ControllerBase
 {
     [HttpGet("accountInformation")]
 

@@ -19,9 +19,9 @@ public class OrderResponse
     public string StopPrice { get; set; }
     public string IcebergQty { get; set; }
     public bool IsWorking { get; set; }
-    public long WorkingTime { get; set; }
-    public string SelfTradePreventionMode { get; set; }
-    public List<Fill> Fills { get; set; }
+    public long? WorkingTime { get; set; }
+    public string? SelfTradePreventionMode { get; set; }
+    public List<Fill>? Fills { get; set; }
 }
 
 public class Fill

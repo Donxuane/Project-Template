@@ -1,8 +1,9 @@
-﻿using TradingBot.Domain.Interfaces.Services;
+﻿using Microsoft.Extensions.Logging;
+using TradingBot.Domain.Interfaces.Services;
 
 namespace TradingBot.Percistance.Services;
 
-public class ToolService : IToolService
+public class ToolService: IToolService
 {
     private readonly Func<IBinanceClientService> _clientService;
     private readonly Func<IBinanceEndpointsService> _endpointsService;

@@ -79,9 +79,11 @@ namespace TradingBot.Controllers
             {
                 Symbol = TradingSymbol.BTCUSDT.ToString(),
                 Side = OrderSide.SELL,
-                Type = OrderTypes.MARKET,
+                Type = OrderTypes.LIMIT,
                 Quantity = 0.1m,
-                Timestamp = serverTime.ServerTime
+                Timestamp = serverTime.ServerTime,
+                TimeInForce = TimeInForce.GTC,
+                Price = 120000m
             };
             var newOrderEndpoint = _service.GetEndpoint(Trading.NewOrder);
             var order = await _client.Call<OrderResponse, NewOrderRequest>(newMarketOrder, newOrderEndpoint, true);
