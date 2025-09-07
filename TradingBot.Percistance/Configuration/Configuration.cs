@@ -20,6 +20,7 @@ public static class Configuration
         services.AddScoped<Func<IBinanceEndpointsService>>(x => x.GetRequiredService<IBinanceEndpointsService>);
         services.AddScoped<Func<IMemoryCacheService>>(x => x.GetRequiredService<IMemoryCacheService>);
         services.AddScoped<Func<IOrderValidator>>(x => x.GetRequiredService<IOrderValidator>);
+        services.AddScoped<Func<IAICLinetService>>(x => x.GetRequiredService<IAICLinetService>);
 
         services.AddScoped<IToolService,ToolService>();
         services.AddMemoryCache();

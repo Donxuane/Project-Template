@@ -10,4 +10,5 @@ public interface IToolService
     public IMemoryCacheService MemoryCacheService { get; }
     public IOrderValidator OrderValidator { get; }
     public ISlicerService SlicerService { get; }
+    public IAICLinetService AICLinetService { get; }
 }
