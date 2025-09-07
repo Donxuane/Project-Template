@@ -24,6 +24,7 @@ public static class Configuration
             .SetBasePath(Path.Combine(Directory.GetCurrentDirectory()))
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .AddJsonFile("platformSettings.json", optional: true, reloadOnChange: true)
+            .AddJsonFile("aiSettings.json",optional: true, reloadOnChange: true)
             .AddEnvironmentVariables();
     }
 }

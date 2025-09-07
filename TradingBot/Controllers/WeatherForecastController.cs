@@ -27,13 +27,15 @@ namespace TradingBot.Controllers
         private readonly IBinanceClientService _client;
         private readonly ISlicerService _slicer;
         private readonly IMemoryCacheService _cache;
+        private readonly IAICLinetService _iclinetService;
 
         public WeatherForecastController(ILogger<WeatherForecastController> logger,
             IBinanceEndpointsService service,
             IBinanceSettingsService settings,
             IBinanceClientService client,
             ISlicerService slicer,
-            IMemoryCacheService cache)
+            IMemoryCacheService cache,
+            IAICLinetService iclinetService)
         {
             _logger = logger;
             _service = service;
@@ -41,6 +43,7 @@ namespace TradingBot.Controllers
             _client = client;
             _slicer = slicer;
             _cache = cache;
+            _iclinetService = iclinetService;
         }
 
         [HttpGet(Name = "GetWeatherForecast")]
@@ -146,6 +149,13 @@ namespace TradingBot.Controllers
         public async Task<ActionResult> ValidatePrice(decimal price)
         {
             var result = await _settings.ValidatePrice(TradingSymbol.BTCUSDT, price);
+            return Ok(result);
+        }
+
+        [HttpPost("AiCall")]
+        public async Task<ActionResult> CallAI(string call)
+        {
+            var result = await _iclinetService.Call<string, string>(call, Domain.Enums.AI.AiRequestModels.String);
             return Ok(result);
         }
     }

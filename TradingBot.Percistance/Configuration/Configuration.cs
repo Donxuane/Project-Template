@@ -24,6 +24,7 @@ public static class Configuration
         services.AddScoped<IToolService,ToolService>();
         services.AddMemoryCache();
         services.AddHttpClient<IBinanceClientService, BinanceClientService>();
+        services.AddHttpClient<IAICLinetService, AIClientService>();
         return services;
     }
 }
