@@ -4,5 +4,12 @@
     "BaseURI": "https://api.openai.com/v1",
     "Endpoint": "/chat/completions",
     "Model": "gpt-4o-mini"
+  },
+
+  "AIEndpoints": {
+    "BuySell": {
+      "Request": "BuySellRequest",
+      "Response": "BuySellResponse"
+    }
   }
 }
