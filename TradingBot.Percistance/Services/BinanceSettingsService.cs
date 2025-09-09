@@ -1,6 +1,4 @@
-﻿using Microsoft.AspNetCore.DataProtection.KeyManagement;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
 using TradingBot.Domain.Enums.Endpoints;
@@ -24,7 +22,7 @@ public class BinanceSettingsService(
         var key = $"{symbol}_ExchangeInformation";
         try
         {
-            var cacheData = cache.GetCacheValue(key);
+            var cacheData = cache.GetCacheValue<ExchangeInfoResponse>(key);
             if (cacheData == null) 
             {
                 var endpoint = endpointService.GetEndpoint(GeneralApis.ExchangeInformation);
@@ -37,9 +35,9 @@ public class BinanceSettingsService(
                 var data = cache.SetCacheValue(key, exchangeInformation);
                 cacheData = data;
             }
-            if (cacheData.GetType() == typeof(ExchangeInfoResponse) && cacheData != null)
+            if (cacheData != null)
             {
-                var retunValue = (ExchangeInfoResponse)cacheData;
+                var retunValue = cacheData;
                 return retunValue.RateLimits.Where(x => x.RateLimitType == type.ToString()).ToList();
             }
             return null;
@@ -64,7 +62,7 @@ public class BinanceSettingsService(
         var key = $"{symbol}_ExchangeInformation";
         try
         {
-            var cacheData = cache.GetCacheValue(key);
+            var cacheData = cache.GetCacheValue<ExchangeInfoResponse>(key);
             if (cacheData == null)
             {
                 var endpoint = endpointService.GetEndpoint(GeneralApis.ExchangeInformation);
@@ -77,9 +75,9 @@ public class BinanceSettingsService(
                 var data = cache.SetCacheValue(key, exchangeInformation);
                 cacheData = data;
             }
-            if(cacheData.GetType() == typeof(ExchangeInfoResponse) && cacheData != null)
+            if(cacheData != null)
             {
-                var value = (ExchangeInfoResponse)cacheData;
+                var value = cacheData;
                 var filter = value.Symbols.FirstOrDefault().Filters;
                 var endpoint = endpointService.GetEndpoint(MarketData.SymbolPriceTicker);
                 var response = await client.Call<SymbolPriceTickerResponse, SymbolPriceTickerRequest>(

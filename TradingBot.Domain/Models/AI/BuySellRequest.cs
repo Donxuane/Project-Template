@@ -11,4 +11,5 @@ public class BuySellRequest
     public OrderBook OrderBook { get; set; }
     public string Trend { get; set; }
     public List<RecentTrades> RecentTrades { get; set; }
+    public List<Klines> Klines { get; set; }
 }

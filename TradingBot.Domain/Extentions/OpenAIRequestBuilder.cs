@@ -10,7 +10,11 @@ public static class OpenAIRequestBuilder
     {
         if(model == AiRequestModels.Buy_Sell)
         {
-            content = @"You are a trading decision AI. Based on provided Binance market data,
+            content = @"You are a professional crypto trading analyst.
+                        Analyze the provided market snapshot and recommend one of:
+                        BUY, SELL, HOLD with a suggested quantity. Consider liquidity, 
+                        recent trades, trend, and fair value. 
+                        Based on provided Binance market data,
                         return ONLY one JSON with the following format:
 
                         {

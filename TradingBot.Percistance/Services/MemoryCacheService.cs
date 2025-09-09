@@ -30,11 +30,11 @@ public class MemoryCacheService(IMemoryCache _cache, ILogger<MemoryCacheService>
         }
     }
 
-    public object? GetCacheValue(string key)
+    public TResponse? GetCacheValue<TResponse>(string key)
     {
         try
         {
-            _cache.TryGetValue(key, out var value);
+            _cache.TryGetValue(key, out TResponse value);
             logger.LogInformation(
                 @"Get Cached Data:
                 model: {model}
@@ -55,7 +55,7 @@ public class MemoryCacheService(IMemoryCache _cache, ILogger<MemoryCacheService>
                 DateTime.Now,
                 key
             );
-            return null;
+            return default;
         }
     }
 
@@ -63,17 +63,14 @@ public class MemoryCacheService(IMemoryCache _cache, ILogger<MemoryCacheService>
     {
         try
         {
-            var value = GetCacheValue(key);
-            if (value != null)
-            {
-                _cache.Remove(key);
-                logger.LogInformation(
-                    @"removed key: {key}
+            _cache.Remove(key);
+            logger.LogInformation(
+                @"removed key: {key}
                     DateTime: {time}",
-                    key,
-                    DateTime.Now
-                );
-            }
+                key,
+                DateTime.Now
+            );
+            
         }
         catch(Exception ex)
         {
@@ -89,7 +86,7 @@ public class MemoryCacheService(IMemoryCache _cache, ILogger<MemoryCacheService>
         }
     }
 
-    public object? SetCacheValue(string key, object value)
+    public TRequest? SetCacheValue<TRequest>(string key, TRequest value)
     {
         try
         {
@@ -114,7 +111,7 @@ public class MemoryCacheService(IMemoryCache _cache, ILogger<MemoryCacheService>
                 DateTime.Now,
                 key
             );
-            return null;
+            return default;
         }
     }
 }
