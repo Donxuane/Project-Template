@@ -125,12 +125,6 @@ namespace TradingBot.Controllers
             return Ok(key);
         }
 
-        [HttpGet("getCacheData")]
-        public ActionResult GetCachedData(string key)
-        {
-            var value = _cache.GetCacheValue(key);
-            return Ok(value);
-        }
         [HttpDelete("removeCacheData")]
         public ActionResult RemoveCachedData(string key)
         {
