@@ -8,7 +8,7 @@ using System.Text.Json.Serialization;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Shared.Shared.Models;
 
-namespace TradingBot.Percistance.Services;
+namespace TradingBot.Percistance.Services.Main;
 
 public class BinanceClientService : IBinanceClientService
 {

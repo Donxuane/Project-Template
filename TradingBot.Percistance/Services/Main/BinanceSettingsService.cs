@@ -3,11 +3,12 @@ using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
 using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Interfaces.Services;
+using TradingBot.Domain.Interfaces.Services.Cache;
 using TradingBot.Domain.Models;
 using TradingBot.Domain.Models.GeneralApis;
 using TradingBot.Domain.Models.MarketData;
 
-namespace TradingBot.Percistance.Services;
+namespace TradingBot.Percistance.Services.Main;
 
 public class BinanceSettingsService(
     ISlicerService slicerService, 

@@ -1,6 +1,6 @@
-﻿namespace TradingBot.Domain.Interfaces.Services;
+﻿namespace TradingBot.Domain.Interfaces.Services.Cache;
 
-public interface IMemoryCacheService
+public interface IMemoryCacheService: IBaseCacheService
 {
     public TRequest? SetCacheValue<TRequest>(string key, TRequest value);
     public TResponse? GetCacheValue<TResponse>(string key);

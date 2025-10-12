@@ -11,6 +11,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="StackExchange.Redis" Version="2.9.25" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\TradingBot.Domain\TradingBot.Domain.csproj" />
   </ItemGroup>
 

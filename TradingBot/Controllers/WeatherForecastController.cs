@@ -9,6 +9,8 @@ using OrderResponse = TradingBot.Domain.Models.TradingEndpoints.OrderResponse;
 using TradingBot.Domain.Models.MarketData;
 using System.Net.WebSockets;
 using TradingBot.Domain.Interfaces.Services;
+using TradingBot.Domain.Interfaces.Services.Cache;
+using TradingBot.Shared.Shared.Enums;
 
 namespace TradingBot.Controllers
 {
@@ -26,7 +28,7 @@ namespace TradingBot.Controllers
         private readonly IBinanceSettingsService _settings;
         private readonly IBinanceClientService _client;
         private readonly ISlicerService _slicer;
-        private readonly IMemoryCacheService _cache;
+        private readonly ICacheService _cache;
         private readonly IAICLinetService _iclinetService;
 
         public WeatherForecastController(ILogger<WeatherForecastController> logger,
@@ -34,7 +36,7 @@ namespace TradingBot.Controllers
             IBinanceSettingsService settings,
             IBinanceClientService client,
             ISlicerService slicer,
-            IMemoryCacheService cache,
+            ICacheService cache,
             IAICLinetService iclinetService)
         {
             _logger = logger;
@@ -118,17 +120,24 @@ namespace TradingBot.Controllers
         }
 
         [HttpPost("cacheData")]
-        public ActionResult CacheData(string name, int age)
+        public async Task<ActionResult> CacheData(string name, int age)
         {
             var key = $"{name}_{age}";
-            _cache.SetCacheValue(key, new { name, age });
+            await _cache.SetCacheValueAsync(key, new { name, age }, CacheType.Redis);
             return Ok(key);
         }
 
-        [HttpDelete("removeCacheData")]
-        public ActionResult RemoveCachedData(string key)
+        [HttpGet("getCacheData")]
+        public async Task<ActionResult> GetCachedData(string key)
         {
-            _cache.RemoveCacheValue(key);
+            var value = await _cache.GetCacheValueAsync<object>(key,CacheType.Redis);
+            return Ok(value);
+        }
+
+        [HttpDelete("removeCacheData")]
+        public async Task<ActionResult> RemoveCachedData(string key)
+        {
+            await _cache.RemoveCacheValueAsync(key,CacheType.Redis);
             return Ok();
         }
 

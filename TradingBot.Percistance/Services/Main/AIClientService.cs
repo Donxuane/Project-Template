@@ -8,7 +8,7 @@ using TradingBot.Domain.Extentions;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.AI;
 using TradingBot.Shared.Shared.Models;
-namespace TradingBot.Percistance.Services;
+namespace TradingBot.Percistance.Services.Main;
 
 public class AIClientService(
     ILogger<AIClientService> logger,

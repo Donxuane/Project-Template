@@ -1,23 +1,27 @@
-﻿using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Logging;
-using TradingBot.Domain.Interfaces.Services;
+﻿using Microsoft.Extensions.Logging;
+using StackExchange.Redis;
+using System.Text.Json;
+using System.Threading.Tasks;
+using TradingBot.Domain.Interfaces.Services.Cache;
 
-namespace TradingBot.Percistance.Services;
+namespace TradingBot.Percistance.Services.Shared;
 
-public class MemoryCacheService(IMemoryCache _cache, ILogger<MemoryCacheService> logger) : IMemoryCacheService
+public class RedisCacheService(IConnectionMultiplexer redis, ILogger<RedisCacheService> logger): IRedisCacheService
 {
-    public List<object?>? GetAllCachedData(List<string> keys)
+    public async Task<List<object?>?> GetAllCachedData(List<string> keys)
     {
         try
         {
             var allData = new List<object?>();
             foreach (var key in keys)
             {
-                _cache.TryGetValue(key, out var value);
+                var database = redis.GetDatabase();
+                var value = await database.StringGetAsync(key);
                 allData.Add(value);
             }
             return allData;
-        }catch (Exception ex)
+        }
+        catch (Exception ex)
         {
             logger.LogError(
                 ex,
@@ -30,11 +34,12 @@ public class MemoryCacheService(IMemoryCache _cache, ILogger<MemoryCacheService>
         }
     }
 
-    public TResponse? GetCacheValue<TResponse>(string key)
+    public async Task<TResponse?> GetCacheValue<TResponse>(string key)
     {
         try
         {
-            _cache.TryGetValue(key, out TResponse value);
+            var database = redis.GetDatabase();
+            var value = await database.StringGetAsync(key);
             logger.LogInformation(
                 @"Get Cached Data:
                 model: {model}
@@ -42,15 +47,15 @@ public class MemoryCacheService(IMemoryCache _cache, ILogger<MemoryCacheService>
                 value,
                 DateTime.Now
             );
-            return value;
+            return value.HasValue ? JsonSerializer.Deserialize<TResponse>(value!) : default;
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
             logger.LogError(
-                ex, 
+                ex,
                 @"Exception: {ex},  
                   DateTime: {date}
-                  Key: {key}", 
+                  Key: {key}",
                 ex.Message,
                 DateTime.Now,
                 key
@@ -59,20 +64,21 @@ public class MemoryCacheService(IMemoryCache _cache, ILogger<MemoryCacheService>
         }
     }
 
-    public void RemoveCacheValue(string key)
+    public async Task RemoveCacheValue(string key)
     {
         try
         {
-            _cache.Remove(key);
+            var database = redis.GetDatabase();
+            await database.KeyDeleteAsync(key);
             logger.LogInformation(
                 @"removed key: {key}
                     DateTime: {time}",
                 key,
                 DateTime.Now
             );
-            
+
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
             logger.LogError(
                 ex,
@@ -86,11 +92,13 @@ public class MemoryCacheService(IMemoryCache _cache, ILogger<MemoryCacheService>
         }
     }
 
-    public TRequest? SetCacheValue<TRequest>(string key, TRequest value)
+    public async Task<TRequest?> SetCacheValue<TRequest>(string key, TRequest value)
     {
         try
         {
-            _cache.Set(key, value, TimeSpan.FromHours(24));
+            var database = redis.GetDatabase();
+            var serilized = JsonSerializer.Serialize(value);
+            var set = await database.StringSetAsync(key, serilized, TimeSpan.FromHours(24));
             logger.LogInformation(
                 @"Cached Data
                 model: {model}
@@ -100,7 +108,7 @@ public class MemoryCacheService(IMemoryCache _cache, ILogger<MemoryCacheService>
             );
             return value;
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
             logger.LogError(
                 ex,

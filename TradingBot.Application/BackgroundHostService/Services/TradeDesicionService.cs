@@ -4,6 +4,7 @@ using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.GeneralApis;
+using TradingBot.Shared.Shared.Enums;
 
 namespace TradingBot.Application.BackgroundHostService.Services;
 
@@ -17,7 +18,7 @@ public class TradeDesicionService(IToolService toolService, ILogger<TradeDesicio
     public async Task<ExchangeInfoResponse> GetExchangeInformation(TradingSymbol symbol)
     {
 
-        var exchangeInformation = toolService.MemoryCacheService.GetCacheValue<ExchangeInfoResponse>($"{symbol}_ExchangeInformation");
+        var exchangeInformation = await toolService.CacheService.GetCacheValueAsync<ExchangeInfoResponse>($"{symbol}_ExchangeInformation",CacheType.Redis);
         if (exchangeInformation == null)
         {
             var exchangeInformationEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.ExchangeInformation);
@@ -25,21 +26,21 @@ public class TradeDesicionService(IToolService toolService, ILogger<TradeDesicio
             {
                 Symbol = symbol.ToString()
             }, exchangeInformationEndpoint, false);
-            var cache = toolService.MemoryCacheService.SetCacheValue($"{symbol}_ExchangeInformation", exchangeInformation);
+            var cache = await toolService.CacheService.SetCacheValueAsync($"{symbol}_ExchangeInformation", exchangeInformation, CacheType.Redis);
         }
         return exchangeInformation;
     }
 
     private async Task<TimeSpan> TimeStampoffset()
     {
-        var offset = toolService.MemoryCacheService.GetCacheValue<TimeSpan>("TimeStampOffset");
+        var offset = await toolService.CacheService.GetCacheValueAsync<TimeSpan>("TimeStampOffset");
         if (offset == null)
         {
             var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
             var serverTimeResult = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyResult>(null, serverTimeEndpoint, false);
             var serverTime = DateTimeOffset.FromUnixTimeMilliseconds(serverTimeResult.ServerTime).UtcDateTime;
             var time = serverTime - DateTime.UtcNow;
-            toolService.MemoryCacheService.SetCacheValue("TimeStampOffset", time);
+            await toolService.CacheService.SetCacheValueAsync("TimeStampOffset", time);
             offset = time;
         }
         return offset;
