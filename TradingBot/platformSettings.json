@@ -1,7 +1,7 @@
 {
   "BaseURL": "https://testnet.binance.vision",
-  "ApiKey": "C8Lu7WgBjRSf5kBUy1RQ7pSo8W8onl79M7C6MOODdjoSxxAPbSkB7njpFnL8oLnP",
-  "SecretKey": "FCLzMlALwmLVWaw9qnbweJ0iecZKNfRZmydq7FvCVLeG2jahv1fL21Y9EHWocEX5",
+  "ApiKey": "test key",
+  "SecretKey": "test secret",
   "PriceValidators": {
     "PRICE_FILTER": {
       "minPrice": "0.00000100",
@@ -236,6 +236,11 @@
       "request": "",
       "response": "OrderAmendmentResponse"
     }
+  },
+  "RiskSettings": {
+    "MaxPositionQuote": 10000,
+    "MaxOrderQuote": 5000,
+    "MaxExposurePercent": 50
   }
 
 }

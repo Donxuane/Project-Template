@@ -18,7 +18,7 @@ public class TradingApi(IToolService service, ILogger<TradingApi> logger)
             var serverTimeEndpoint = service.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
             var serverTime = await service.BinanceClientService.Call<ServerTimeResponse, EmptyResult>(null, serverTimeEndpoint, false);
 
-            var cancelAllOrdersEndpoint = service.BinanceEndpointsService.GetEndpoint(Trading.CancelAllOrders);
+            var cancelAllOrdersEndpoint = service.BinanceEndpointsService.GetEndpoint(Domain.Enums.Endpoints.Trading.CancelAllOrders);
             var cacelAllOrders = await service.BinanceClientService.Call<List<OrderResponse>, CancelAllOrdersRequest>(new CancelAllOrdersRequest
             {
                 RecvWindow = 30000,
@@ -47,7 +47,7 @@ public class TradingApi(IToolService service, ILogger<TradingApi> logger)
             var serverTimeEndpoint = service.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
             var serverTime = await service.BinanceClientService.Call<ServerTimeResponse, EmptyResult>(null, serverTimeEndpoint, false);
 
-            var openOrdersEndoint = service.BinanceEndpointsService.GetEndpoint(Trading.QueryOpenOrders);
+            var openOrdersEndoint = service.BinanceEndpointsService.GetEndpoint(Domain.Enums.Endpoints.Trading.QueryOpenOrders);
             var openOrders = await service.BinanceClientService.Call<List<OrderResponse>, QueryOrderRequest>(new QueryOrderRequest
             {
                 RecvWindow = 30000,

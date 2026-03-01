@@ -9,6 +9,7 @@ public interface IToolService
     public IBinanceEndpointsService BinanceEndpointsService { get; }
     public IBinanceSettingsService BinanceSettingsService { get; }
     public ICacheService CacheService { get; }
+    public IRedisCacheService RedisCacheService { get; }
     public IOrderValidator OrderValidator { get; }
     public ISlicerService SlicerService { get; }
     public IAICLinetService AICLinetService { get; }

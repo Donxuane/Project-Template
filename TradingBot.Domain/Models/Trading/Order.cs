@@ -1,0 +1,18 @@
+using TradingBot.Domain.Enums;
+using TradingBot.Domain.Enums.Binance;
+
+namespace TradingBot.Domain.Models.Trading;
+
+public class Order
+{
+    public Guid Id { get; set; }
+    public long? ExchangeOrderId { get; set; }
+    public TradingSymbol Symbol { get; set; }
+    public OrderSide Side { get; set; }
+    public OrderStatuses Status { get; set; }
+    public decimal Price { get; set; }
+    public decimal Quantity { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
