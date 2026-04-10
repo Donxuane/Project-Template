@@ -1,11 +1,11 @@
 CREATE TABLE IF NOT EXISTS trade_executions
 (
-    id                uuid        PRIMARY KEY,
-    order_id          uuid        NOT NULL REFERENCES orders (id) ON DELETE CASCADE,
+    id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    order_id          bigint      NOT NULL REFERENCES orders (id) ON DELETE CASCADE,
     exchange_order_id bigint,
     exchange_trade_id bigint      UNIQUE,
-    symbol            text        NOT NULL,
-    side              text        NOT NULL,
+    symbol            integer    NOT NULL,
+    side              integer    NOT NULL,
     price             numeric(38, 18) NOT NULL,
     quantity          numeric(38, 18) NOT NULL,
     executed_at       timestamptz NOT NULL,

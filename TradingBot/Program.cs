@@ -1,6 +1,7 @@
 using TradingBot.Application.Configuration;
 using TradingBot.Configuration;
 using TradingBot.Percistance.Configuration;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.ConfigurationExtention();
@@ -9,9 +10,11 @@ builder.ConfigurationExtention();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.LoggerConfigure();
+builder.Services.LoggerConfigure(builder.Configuration);
+builder.Host.UseSerilog();
 builder.Services.ConfigureServices(builder.Configuration);
 builder.Services.ConfigApplication();
+builder.Services.AddSettings(builder.Configuration);
 
 var app = builder.Build();
 
@@ -28,4 +31,11 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-app.Run();
+try
+{
+    app.Run();
+}
+finally
+{
+    Log.CloseAndFlush();
+}

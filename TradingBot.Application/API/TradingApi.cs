@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Endpoints;
@@ -16,7 +16,7 @@ public class TradingApi(IToolService service, ILogger<TradingApi> logger)
         try
         {
             var serverTimeEndpoint = service.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-            var serverTime = await service.BinanceClientService.Call<ServerTimeResponse, EmptyResult>(null, serverTimeEndpoint, false);
+            var serverTime = await service.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>(null, serverTimeEndpoint, false);
 
             var cancelAllOrdersEndpoint = service.BinanceEndpointsService.GetEndpoint(Domain.Enums.Endpoints.Trading.CancelAllOrders);
             var cacelAllOrders = await service.BinanceClientService.Call<List<OrderResponse>, CancelAllOrdersRequest>(new CancelAllOrdersRequest
@@ -45,7 +45,7 @@ public class TradingApi(IToolService service, ILogger<TradingApi> logger)
         try
         {
             var serverTimeEndpoint = service.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-            var serverTime = await service.BinanceClientService.Call<ServerTimeResponse, EmptyResult>(null, serverTimeEndpoint, false);
+            var serverTime = await service.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>(null, serverTimeEndpoint, false);
 
             var openOrdersEndoint = service.BinanceEndpointsService.GetEndpoint(Domain.Enums.Endpoints.Trading.QueryOpenOrders);
             var openOrders = await service.BinanceClientService.Call<List<OrderResponse>, QueryOrderRequest>(new QueryOrderRequest

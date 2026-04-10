@@ -10,7 +10,7 @@ public class GetOpenOrdersQueryHandler(IOrderRepository orderRepository)
 {
     public async Task<IReadOnlyList<Order>> Handle(GetOpenOrdersQuery request, CancellationToken cancellationToken)
     {
-        return await orderRepository.GetOpenOrdersAsync(request.Symbol, cancellationToken);
+        return await orderRepository.GetOpenOrdersAsync(request.Symbol, null, cancellationToken);
     }
 }
 

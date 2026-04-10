@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TradingBot.Domain.Interfaces.Services;
@@ -20,7 +20,7 @@ public class JobWorker(IServiceProvider serviceProvider) : BackgroundService
                 var toolService = scope.ServiceProvider.GetRequiredService<IToolService>();
 
                 var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(Domain.Enums.Endpoints.GeneralApis.CheckServerTime);
-                var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse,EmptyResult>(null,serverTimeEndpoint,false);
+                var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>(null,serverTimeEndpoint,false);
                 Console.WriteLine($"Server time: {serverTime.ServerTime}");
 
                 await Task.Delay(TimeSpan.FromSeconds(50), stoppingToken);

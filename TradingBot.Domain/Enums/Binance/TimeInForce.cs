@@ -1,2 +1,6 @@
 ﻿namespace TradingBot.Domain.Enums.Binance;
-public enum TimeInForce { GTC, IOC, FOK }
+public enum TimeInForce { 
+    GTC, 
+    IOC,
+    FOK 
+}

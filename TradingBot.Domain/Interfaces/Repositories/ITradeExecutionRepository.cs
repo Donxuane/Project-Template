@@ -5,10 +5,10 @@ namespace TradingBot.Domain.Interfaces.Repositories;
 
 public interface ITradeExecutionRepository
 {
-    Task<Guid> InsertAsync(TradeExecution execution, CancellationToken cancellationToken = default);
-    Task<TradeExecution?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<long> InsertAsync(TradeExecution execution, CancellationToken cancellationToken = default);
+    Task<TradeExecution?> GetByIdAsync(long id, CancellationToken cancellationToken = default);
     Task<TradeExecution?> GetByExchangeTradeIdAsync(long exchangeTradeId, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<TradeExecution>> GetByOrderIdAsync(Guid orderId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<TradeExecution>> GetByOrderIdAsync(long orderId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<TradeExecution>> GetBySymbolAsync(TradingSymbol symbol, CancellationToken cancellationToken = default);
 }
 

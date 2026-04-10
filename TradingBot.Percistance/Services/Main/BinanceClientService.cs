@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 using System.Net.Http.Json;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -13,20 +13,27 @@ namespace TradingBot.Percistance.Services.Main;
 public class BinanceClientService : IBinanceClientService
 {
     private readonly HttpClient _httpClient;
+    private readonly ITimeSyncService _timeSyncService;
+    private readonly IBinanceRateLimiter _rateLimiter;
     private static string? _apiKey;
     private static string? _secretKey;
 
-    public BinanceClientService(IConfiguration configuration, HttpClient httpClient)
+    public BinanceClientService(IConfiguration configuration, HttpClient httpClient, ITimeSyncService timeSyncService, IBinanceRateLimiter rateLimiter)
     {
         _httpClient = httpClient;
-        var baseUrl = configuration.GetSection("BaseURL").Get<string>();
-        _apiKey = configuration.GetSection("ApiKey").Get<string>();
-        _secretKey = configuration.GetSection("SecretKey").Get<string>();
+        _timeSyncService = timeSyncService;
+        _rateLimiter = rateLimiter;
+        var baseUrl = configuration.GetSection("BaseURL").Get<string>()!;
+        _apiKey = configuration.GetSection("ApiKey").Get<string>()!;
+        _secretKey = configuration.GetSection("SecretKey").Get<string>()!;
         _httpClient.BaseAddress = new Uri(baseUrl);
         _httpClient.DefaultRequestHeaders.Add("X-MBX-APIKEY", _apiKey);
     }
+
     public async Task<TResponse> Call<TResponse, TRequest>(TRequest? request, Endpoint endpoint, bool enableSignature)
     {
+        await _rateLimiter.WaitAsync();
+
         if (string.IsNullOrWhiteSpace(endpoint.API))
             throw new ArgumentException("Endpoint API path is missing");
 
@@ -37,17 +44,26 @@ public class BinanceClientService : IBinanceClientService
             .Where(p => p.GetValue(request) != null)
             .ToDictionary(
                 p => p.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name
-                     ?? char.ToLowerInvariant(p.Name[0]) + p.Name.Substring(1),
+                        ?? char.ToLowerInvariant(p.Name[0]) + p.Name.Substring(1),
                 p =>
                 {
                     var value = p.GetValue(request);
-                    if(value is bool val)
-                    {
-                        return val.ToString().ToLower();
-                    }
-                    return value.ToString()!;
+
+                    if (value is bool b)
+                        return b.ToString().ToLower();
+
+                    if (value is IEnumerable<string> stringList)
+                        return JsonSerializer.Serialize(stringList);
+
+                    if (value is IEnumerable<object> objList)
+                        return JsonSerializer.Serialize(objList);
+
+                    return value!.ToString()!;
                 }
-            );
+                );
+
+        if (enableSignature && requestDict.ContainsKey("timestamp"))
+            requestDict["timestamp"] = (await _timeSyncService.GetAdjustedTimestampAsync()).ToString();
 
         string queryString = string.Join("&", requestDict.Select(kv => $"{kv.Key}={kv.Value}"));
 
@@ -79,7 +95,7 @@ public class BinanceClientService : IBinanceClientService
                 : $"{endpoint.API}?{queryString}";
             response = await _httpClient.DeleteAsync(fullUrl);
         }
-        else if(endpoint.Type?.Equals("PUT",StringComparison.OrdinalIgnoreCase) == true)
+        else if (endpoint.Type?.Equals("PUT", StringComparison.OrdinalIgnoreCase) == true)
         {
             var content = new StringContent(queryString, Encoding.UTF8, "application/x-www-form-urlencoded");
             response = await _httpClient.PutAsync(endpoint.API, content);

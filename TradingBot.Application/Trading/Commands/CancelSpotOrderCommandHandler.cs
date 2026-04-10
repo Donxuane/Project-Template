@@ -24,7 +24,7 @@ public class CancelSpotOrderCommandHandler(
             var existing = await orderRepository.GetByExchangeOrderIdAsync(request.ExchangeOrderId, cancellationToken);
 
             var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-            var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyResult>(
+            var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>(
                 null, serverTimeEndpoint, false);
 
             var cancelEndpoint = toolService.BinanceEndpointsService.GetEndpoint(Domain.Enums.Endpoints.Trading.CancelOrder);

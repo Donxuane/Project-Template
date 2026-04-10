@@ -5,9 +5,10 @@ namespace TradingBot.Domain.Interfaces.Repositories;
 
 public interface IPositionRepository
 {
-    Task<Guid> UpsertAsync(Position position, CancellationToken cancellationToken = default);
-    Task<Position?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<long> UpsertAsync(Position position, CancellationToken cancellationToken = default);
+    Task<Position?> GetByIdAsync(long id, CancellationToken cancellationToken = default);
     Task<Position?> GetOpenPositionAsync(TradingSymbol symbol, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Position>> GetOpenPositionsAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Position>> GetClosedPositionsAsync(CancellationToken cancellationToken = default);
 }
 

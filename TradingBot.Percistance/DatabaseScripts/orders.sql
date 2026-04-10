@@ -1,10 +1,12 @@
 CREATE TABLE IF NOT EXISTS orders
 (
-    id                uuid        PRIMARY KEY,
+    id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     exchange_order_id bigint      UNIQUE,
-    symbol            text        NOT NULL,
-    side              text        NOT NULL,
-    status            text        NOT NULL,
+    symbol            integer    NOT NULL,
+    side              integer    NOT NULL,
+    status            integer    NOT NULL,
+    processing_status integer    NOT NULL DEFAULT 1,
+    sync_retry_count  integer    NOT NULL DEFAULT 0,
     price             numeric(38, 18) NOT NULL,
     quantity          numeric(38, 18) NOT NULL,
     created_at        timestamptz NOT NULL,
@@ -16,4 +18,7 @@ CREATE INDEX IF NOT EXISTS ix_orders_symbol_status_created_at
 
 CREATE INDEX IF NOT EXISTS ix_orders_exchange_order_id
     ON orders (exchange_order_id);
+
+CREATE INDEX IF NOT EXISTS ix_orders_processing_status
+    ON orders (processing_status);
 

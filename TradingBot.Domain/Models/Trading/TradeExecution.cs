@@ -5,8 +5,8 @@ namespace TradingBot.Domain.Models.Trading;
 
 public class TradeExecution
 {
-    public Guid Id { get; set; }
-    public Guid OrderId { get; set; }
+    public long Id { get; set; }
+    public long OrderId { get; set; }
     public long? ExchangeOrderId { get; set; }
     public long? ExchangeTradeId { get; set; }
     public TradingSymbol Symbol { get; set; }

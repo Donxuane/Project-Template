@@ -1,4 +1,3 @@
-﻿using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Interfaces.Services.Cache;
 
 namespace TradingBot.Domain.Interfaces.Services;
@@ -8,7 +7,6 @@ public interface IToolService
     public IBinanceClientService BinanceClientService { get; }
     public IBinanceEndpointsService BinanceEndpointsService { get; }
     public IBinanceSettingsService BinanceSettingsService { get; }
-    public ICacheService CacheService { get; }
     public IRedisCacheService RedisCacheService { get; }
     public IOrderValidator OrderValidator { get; }
     public ISlicerService SlicerService { get; }

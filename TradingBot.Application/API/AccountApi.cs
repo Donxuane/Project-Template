@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Interfaces.Services;
@@ -14,7 +14,7 @@ public class AccountApi(IToolService toolService, ILogger<AccountApi> logger)
         try
         {
             var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-            var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyResult>
+            var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>
             (
                 null,
                 serverTimeEndpoint,

@@ -24,19 +24,24 @@ public static class Configuration
         services.AddScoped<ISlicerService, SlicerService>();
         services.AddScoped<IRedisCacheService, RedisCacheService>();
         services.AddScoped<IOrderValidator, OrderValidator>();
-        services.AddScoped<ICacheService, CacheService>();
+        services.AddScoped<IOrderStatusService, OrderStatusService>();
+        services.AddScoped<ITimeSyncService, TimeSyncService>();
+        services.AddSingleton<IBinanceRateLimiter, BinanceRateLimiter>();
+        services.AddSingleton<ITradeIdempotencyService, TradeIdempotencyService>();
+        services.AddScoped<IPriceCacheService, PriceCacheService>();
 
         //repositories
         services.AddScoped<IOrderRepository, OrderRepository>();
         services.AddScoped<ITradeExecutionRepository, TradeExecutionRepository>();
         services.AddScoped<IPositionRepository, PositionRepository>();
         services.AddScoped<IBalanceRepository, BalanceRepository>();
+        services.AddScoped<IAnalyticsRepository, AnalyticsRepository>();
 
         //risk management
         services.AddScoped<IRiskManagementService, RiskManagementService>();
 
         //factories
-        services.AddScoped<Func<IBinanceClientService>>(x=>x.GetRequiredService<IBinanceClientService>);
+        services.AddScoped<Func<IBinanceClientService>>(x => x.GetRequiredService<IBinanceClientService>);
         services.AddScoped<Func<IBinanceSettingsService>>(x => x.GetRequiredService<IBinanceSettingsService>);
         services.AddScoped<Func<ISlicerService>>(x => x.GetRequiredService<ISlicerService>);
         services.AddScoped<Func<IBinanceEndpointsService>>(x => x.GetRequiredService<IBinanceEndpointsService>);
@@ -45,9 +50,7 @@ public static class Configuration
         services.AddScoped<Func<IRedisCacheService>>(x => x.GetRequiredService<IRedisCacheService>);
 
         //orchestrators
-        services.AddScoped<IToolService,ToolService>();
-
-        services.AddMemoryCache();
+        services.AddScoped<IToolService, ToolService>();
         //client services
         services.AddHttpClient<IBinanceClientService, BinanceClientService>();
         services.AddHttpClient<IAICLinetService, AIClientService>();
@@ -68,6 +71,12 @@ public static class Configuration
             var mainStorage = configuration.GetSection("ConnectionStrings").Get<ConnectionStrings>()!;
             return new NpgsqlConnection(mainStorage.MainStorage);
         });
+        return services;
+    }
+
+    public static IServiceCollection AddSettings(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<ConnectionStrings>(configuration.GetSection("ConnectionStrings"));
         return services;
     }
 }

@@ -5,11 +5,14 @@ namespace TradingBot.Domain.Models.Trading;
 
 public class Order
 {
-    public Guid Id { get; set; }
+    public long Id { get; set; }
     public long? ExchangeOrderId { get; set; }
     public TradingSymbol Symbol { get; set; }
     public OrderSide Side { get; set; }
     public OrderStatuses Status { get; set; }
+    public ProcessingStatus ProcessingStatus { get; set; }
+    /// <summary>Incremented when transitioned to TradesSyncFailed; reset when TradesSynced.</summary>
+    public int SyncRetryCount { get; set; }
     public decimal Price { get; set; }
     public decimal Quantity { get; set; }
     public DateTime CreatedAt { get; set; }

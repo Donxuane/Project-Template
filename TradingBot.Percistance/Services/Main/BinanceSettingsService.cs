@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
 using TradingBot.Domain.Enums.Endpoints;
@@ -11,10 +11,10 @@ using TradingBot.Domain.Models.MarketData;
 namespace TradingBot.Percistance.Services.Main;
 
 public class BinanceSettingsService(
-    ISlicerService slicerService, 
+    ISlicerService slicerService,
     IBinanceClientService client,
     IBinanceEndpointsService endpointService,
-    IMemoryCacheService cache,
+    IRedisCacheService cache,
     ILogger<BinanceSettingsService> logger,
     IOrderValidator orderValidator) : IBinanceSettingsService
 {
@@ -23,8 +23,8 @@ public class BinanceSettingsService(
         var key = $"{symbol}_ExchangeInformation";
         try
         {
-            var cacheData = cache.GetCacheValue<ExchangeInfoResponse>(key);
-            if (cacheData == null) 
+            var cacheData = await cache.GetCacheValue<ExchangeInfoResponse>(key);
+            if (cacheData == null)
             {
                 var endpoint = endpointService.GetEndpoint(GeneralApis.ExchangeInformation);
                 var exchangeInformation = await client.Call<ExchangeInfoResponse, CurrencyPairs>(
@@ -33,8 +33,8 @@ public class BinanceSettingsService(
                         Symbol = symbol.ToString()
                     }, endpoint, false
                 );
-                var data = cache.SetCacheValue(key, exchangeInformation);
-                cacheData = data;
+                await cache.SetCacheValue(key, exchangeInformation);
+                cacheData = exchangeInformation;
             }
             if (cacheData != null)
             {
@@ -63,7 +63,7 @@ public class BinanceSettingsService(
         var key = $"{symbol}_ExchangeInformation";
         try
         {
-            var cacheData = cache.GetCacheValue<ExchangeInfoResponse>(key);
+            var cacheData = await cache.GetCacheValue<ExchangeInfoResponse>(key);
             if (cacheData == null)
             {
                 var endpoint = endpointService.GetEndpoint(GeneralApis.ExchangeInformation);
@@ -73,8 +73,8 @@ public class BinanceSettingsService(
                         Symbol = symbol.ToString()
                     }, endpoint, false
                 );
-                var data = cache.SetCacheValue(key, exchangeInformation);
-                cacheData = data;
+                await cache.SetCacheValue(key, exchangeInformation);
+                cacheData = exchangeInformation;
             }
             if(cacheData != null)
             {

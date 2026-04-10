@@ -8,24 +8,33 @@ namespace TradingBot.Percistance.Repositories;
 
 public class BalanceRepository(IDbConnection connection) : IBalanceRepository
 {
-    public async Task<Guid> InsertAsync(BalanceSnapshot snapshot, CancellationToken cancellationToken = default)
+    public async Task<long> InsertAsync(BalanceSnapshot snapshot, CancellationToken cancellationToken = default)
     {
-        if (snapshot.Id == Guid.Empty)
-            snapshot.Id = Guid.NewGuid();
-
         var now = DateTime.UtcNow;
         snapshot.CreatedAt = now;
         snapshot.UpdatedAt = now;
 
         const string sql = """
             INSERT INTO balance_snapshots
-                (id, asset, symbol, side, free, locked, created_at, updated_at)
+                (asset, symbol, side, free, locked, created_at, updated_at)
             VALUES
-                (@Id, @Asset, @Symbol, @Side, @Free, @Locked, @CreatedAt, @UpdatedAt);
+                (@Asset, @Symbol, @Side, @Free, @Locked, @CreatedAt, @UpdatedAt)
+            RETURNING id;
             """;
 
-        await connection.ExecuteAsync(new CommandDefinition(sql, snapshot, cancellationToken: cancellationToken));
-        return snapshot.Id;
+        var param = new
+        {
+            snapshot.Asset,
+            Symbol = (int)snapshot.Symbol,
+            Side = (int)snapshot.Side,
+            snapshot.Free,
+            snapshot.Locked,
+            snapshot.CreatedAt,
+            snapshot.UpdatedAt
+        };
+        var id = await connection.ExecuteScalarAsync<long>(new CommandDefinition(sql, param, cancellationToken: cancellationToken));
+        snapshot.Id = id;
+        return id;
     }
 
     public async Task<BalanceSnapshot?> GetLatestAsync(string asset, TradingSymbol symbol, CancellationToken cancellationToken = default)
@@ -39,7 +48,7 @@ public class BalanceRepository(IDbConnection connection) : IBalanceRepository
             """;
 
         return await connection.QuerySingleOrDefaultAsync<BalanceSnapshot>(
-            new CommandDefinition(sql, new { Asset = asset, Symbol = symbol }, cancellationToken: cancellationToken));
+            new CommandDefinition(sql, new { Asset = asset, Symbol = (int)symbol }, cancellationToken: cancellationToken));
     }
 
     public async Task<IReadOnlyList<BalanceSnapshot>> GetLatestForAllAsync(CancellationToken cancellationToken = default)

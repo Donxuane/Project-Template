@@ -1,13 +1,13 @@
 CREATE TABLE IF NOT EXISTS balance_snapshots
 (
-    id         uuid        PRIMARY KEY,
-    asset      text        NOT NULL,
-    symbol     text        NOT NULL,
-    side       text        NOT NULL,
+    id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    asset      text            NOT NULL,
+    symbol     integer         NOT NULL,
+    side       integer         NOT NULL,
     free       numeric(38, 18) NOT NULL,
     locked     numeric(38, 18) NOT NULL,
-    created_at timestamptz NOT NULL,
-    updated_at timestamptz NOT NULL
+    created_at timestamptz     NOT NULL,
+    updated_at timestamptz     NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_balance_snapshots_asset_symbol_created_at

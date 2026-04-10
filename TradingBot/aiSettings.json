@@ -1,12 +1,19 @@
 {
+  //"_comment": "AI provider settings. Loaded after appsettings/platformSettings and used by AIClientService.",
   "OpenAISettings": {
+    //"_comment": "Connection and model selection for AI requests.",
+    //"_comment_APIKey": "API token for OpenAI-compatible provider. Use environment variable/secret store in real deployment.",
     "APIKey": "",
+    //"_comment_BaseURI": "Base URL for the AI API provider.",
     "BaseURI": "https://api.openai.com/v1",
+    //"_comment_Endpoint": "Relative endpoint used for chat/completions calls.",
     "Endpoint": "/chat/completions",
+    //"_comment_Model": "Model name used when building AI requests.",
     "Model": "gpt-4o-mini"
   },
 
   "AIEndpoints": {
+    //"_comment": "Logical AI endpoint contracts used in prompt/response mapping.",
     "BuySell": {
       "Request": "BuySellRequest",
       "Response": "BuySellResponse"

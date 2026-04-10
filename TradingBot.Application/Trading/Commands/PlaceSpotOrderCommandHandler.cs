@@ -18,7 +18,10 @@ namespace TradingBot.Application.Trading;
 public class PlaceSpotOrderCommandHandler(
     IToolService toolService,
     IOrderRepository orderRepository,
+    ITradeExecutionRepository tradeExecutionRepository,
+    IOrderStatusService orderStatusService,
     IRiskManagementService riskManagementService,
+    IPriceCacheService priceCacheService,
     ILogger<PlaceSpotOrderCommandHandler> logger) : IRequestHandler<PlaceSpotOrderCommand, PlaceSpotOrderResult>
 {
     public async Task<PlaceSpotOrderResult> Handle(PlaceSpotOrderCommand request, CancellationToken cancellationToken)
@@ -43,7 +46,9 @@ public class PlaceSpotOrderCommandHandler(
                 };
             }
 
-            var price = request.IsLimitOrder ? request.Price!.Value : await GetCurrentPrice(request.Symbol, cancellationToken);
+            var price = request.IsLimitOrder
+            ? request.Price!.Value
+            : (await priceCacheService.GetCachedPriceAsync(request.Symbol, cancellationToken) ?? await GetCurrentPrice(request.Symbol, cancellationToken));
 
             var riskResult = await riskManagementService.CheckOrderAsync(request.Symbol, request.Side, request.Quantity, price, cancellationToken);
             if (!riskResult.IsAllowed)
@@ -56,7 +61,7 @@ public class PlaceSpotOrderCommandHandler(
             }
 
             var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-            var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyResult>(
+            var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>(
                 null, serverTimeEndpoint, false);
 
             var newOrderEndpoint = toolService.BinanceEndpointsService.GetEndpoint(TradingBot.Domain.Enums.Endpoints.Trading.NewOrder);
@@ -83,11 +88,38 @@ public class PlaceSpotOrderCommandHandler(
                 Symbol = request.Symbol,
                 Side = request.Side,
                 Status = exchangeOrder.Status.ToOrderStatus(),
+                ProcessingStatus = ProcessingStatus.OrderPlaced,
                 Price = request.IsLimitOrder ? price : decimal.Parse(exchangeOrder.Price ?? "0", CultureInfo.InvariantCulture),
                 Quantity = executedQty > 0 ? executedQty : request.Quantity
             };
 
             await orderRepository.InsertAsync(order, cancellationToken);
+
+            if (order.Status is OrderStatuses.FILLED or OrderStatuses.PARTIALLY_FILLED)
+                await orderStatusService.TryUpdateProcessingStatusAsync(order.Id, ProcessingStatus.OrderPlaced, ProcessingStatus.TradesSyncPending, cancellationToken);
+
+            if (exchangeOrder.Fills is { Count: > 0 })
+            {
+                var responseSymbol = Enum.TryParse<TradingSymbol>(exchangeOrder.Symbol, true, out var sym) ? sym : request.Symbol;
+                var responseSide = Enum.TryParse<OrderSide>(exchangeOrder.Side, true, out var sid) ? sid : request.Side;
+                var executedAt = DateTimeOffset.FromUnixTimeMilliseconds(exchangeOrder.TransactTime).UtcDateTime;
+
+                foreach (var fill in exchangeOrder.Fills)
+                {
+                    var execution = new TradeExecution
+                    {
+                        OrderId = order.Id,
+                        ExchangeOrderId = exchangeOrder.OrderId,
+                        ExchangeTradeId = fill.TradeId,
+                        Symbol = responseSymbol,
+                        Side = responseSide,
+                        Price = fill.Price.ToDecimal(),
+                        Quantity = fill.Qty.ToDecimal(),
+                        ExecutedAt = executedAt
+                    };
+                    await tradeExecutionRepository.InsertAsync(execution, cancellationToken);
+                }
+            }
 
             return new PlaceSpotOrderResult
             {

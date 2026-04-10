@@ -8,26 +8,38 @@ namespace TradingBot.Percistance.Repositories;
 
 public class TradeExecutionRepository(IDbConnection connection) : ITradeExecutionRepository
 {
-    public async Task<Guid> InsertAsync(TradeExecution execution, CancellationToken cancellationToken = default)
+    public async Task<long> InsertAsync(TradeExecution execution, CancellationToken cancellationToken = default)
     {
-        if (execution.Id == Guid.Empty)
-            execution.Id = Guid.NewGuid();
-
         execution.CreatedAt = DateTime.UtcNow;
         execution.UpdatedAt = execution.CreatedAt;
 
         const string sql = """
             INSERT INTO trade_executions
-                (id, order_id, exchange_order_id, exchange_trade_id, symbol, side, price, quantity, executed_at, created_at, updated_at)
+                (order_id, exchange_order_id, exchange_trade_id, symbol, side, price, quantity, executed_at, created_at, updated_at)
             VALUES
-                (@Id, @OrderId, @ExchangeOrderId, @ExchangeTradeId, @Symbol, @Side, @Price, @Quantity, @ExecutedAt, @CreatedAt, @UpdatedAt);
+                (@OrderId, @ExchangeOrderId, @ExchangeTradeId, @Symbol, @Side, @Price, @Quantity, @ExecutedAt, @CreatedAt, @UpdatedAt)
+            RETURNING id;
             """;
 
-        await connection.ExecuteAsync(new CommandDefinition(sql, execution, cancellationToken: cancellationToken));
-        return execution.Id;
+        var param = new
+        {
+            execution.OrderId,
+            execution.ExchangeOrderId,
+            execution.ExchangeTradeId,
+            Symbol = (int)execution.Symbol,
+            Side = (int)execution.Side,
+            execution.Price,
+            execution.Quantity,
+            execution.ExecutedAt,
+            execution.CreatedAt,
+            execution.UpdatedAt
+        };
+        var id = await connection.ExecuteScalarAsync<long>(new CommandDefinition(sql, param, cancellationToken: cancellationToken));
+        execution.Id = id;
+        return id;
     }
 
-    public async Task<TradeExecution?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<TradeExecution?> GetByIdAsync(long id, CancellationToken cancellationToken = default)
     {
         const string sql = """
             SELECT id, order_id AS OrderId, exchange_order_id AS ExchangeOrderId, exchange_trade_id AS ExchangeTradeId,
@@ -53,7 +65,7 @@ public class TradeExecutionRepository(IDbConnection connection) : ITradeExecutio
             new CommandDefinition(sql, new { ExchangeTradeId = exchangeTradeId }, cancellationToken: cancellationToken));
     }
 
-    public async Task<IReadOnlyList<TradeExecution>> GetByOrderIdAsync(Guid orderId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<TradeExecution>> GetByOrderIdAsync(long orderId, CancellationToken cancellationToken = default)
     {
         const string sql = """
             SELECT id, order_id AS OrderId, exchange_order_id AS ExchangeOrderId, exchange_trade_id AS ExchangeTradeId,
@@ -79,7 +91,7 @@ public class TradeExecutionRepository(IDbConnection connection) : ITradeExecutio
             """;
 
         var result = await connection.QueryAsync<TradeExecution>(
-            new CommandDefinition(sql, new { Symbol = symbol }, cancellationToken: cancellationToken));
+            new CommandDefinition(sql, new { Symbol = (int)symbol }, cancellationToken: cancellationToken));
         return result.ToList();
     }
 }

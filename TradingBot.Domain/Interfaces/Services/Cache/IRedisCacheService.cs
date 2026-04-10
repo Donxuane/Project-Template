@@ -1,6 +1,6 @@
-﻿namespace TradingBot.Domain.Interfaces.Services.Cache;
+namespace TradingBot.Domain.Interfaces.Services.Cache;
 
-public interface IRedisCacheService: IBaseCacheService
+public interface IRedisCacheService
 {
     public Task<TRequest?> SetCacheValue<TRequest>(string key, TRequest value);
     public Task<TResponse?> GetCacheValue<TResponse>(string key);

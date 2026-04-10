@@ -1,48 +1,41 @@
-﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Enums;
-using TradingBot.Domain.Enums.Endpoints;
-using TradingBot.Domain.Interfaces.Services;
-using TradingBot.Domain.Models.GeneralApis;
-using TradingBot.Shared.Shared.Enums;
+using TradingBot.Domain.Interfaces.Services.Decision;
+using TradingBot.Domain.Models.Decision;
 
 namespace TradingBot.Application.BackgroundHostService.Services;
 
-public class TradeDesicionService(IToolService toolService, ILogger<TradeDesicionService> logger)
+public class TradeDesicionService(IDecisionService decisionService, ILogger<TradeDesicionService> logger)
 {
-    public async Task MakeDesicion()
+    public async Task<DecisionResult> MakeDesicion(TradingSymbol symbol, decimal quantity, CancellationToken cancellationToken = default)
     {
+        var result = await decisionService.DecideAsync(symbol, quantity, cancellationToken);
+        var normalizedConfidence = NormalizeConfidence(result.Confidence);
+        var finalResult = new DecisionResult
+        {
+            Action = result.Action,
+            Reason = result.Reason,
+            Candidate = result.Candidate,
+            Confidence = normalizedConfidence
+        };
 
+        logger.LogInformation(
+            "TradeDesicionService result: Symbol={Symbol}, Action={Action}, Confidence={Confidence:F4}, Reason={Reason}",
+            symbol, finalResult.Action, finalResult.Confidence, finalResult.Reason);
+        return finalResult;
     }
 
-    public async Task<ExchangeInfoResponse> GetExchangeInformation(TradingSymbol symbol)
+    public Task<DecisionResult> MakeDesicion(CancellationToken cancellationToken = default)
     {
-
-        var exchangeInformation = await toolService.CacheService.GetCacheValueAsync<ExchangeInfoResponse>($"{symbol}_ExchangeInformation",CacheType.Redis);
-        if (exchangeInformation == null)
-        {
-            var exchangeInformationEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.ExchangeInformation);
-            exchangeInformation = await toolService.BinanceClientService.Call<ExchangeInfoResponse, CurrencyPairs>(new CurrencyPairs
-            {
-                Symbol = symbol.ToString()
-            }, exchangeInformationEndpoint, false);
-            var cache = await toolService.CacheService.SetCacheValueAsync($"{symbol}_ExchangeInformation", exchangeInformation, CacheType.Redis);
-        }
-        return exchangeInformation;
+        // Backward-compatible overload for existing callers.
+        return MakeDesicion(TradingSymbol.BTCUSDT, 0.001m, cancellationToken);
     }
 
-    private async Task<TimeSpan> TimeStampoffset()
+    private static decimal NormalizeConfidence(decimal confidence)
     {
-        var offset = await toolService.CacheService.GetCacheValueAsync<TimeSpan>("TimeStampOffset");
-        if (offset == null)
-        {
-            var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-            var serverTimeResult = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyResult>(null, serverTimeEndpoint, false);
-            var serverTime = DateTimeOffset.FromUnixTimeMilliseconds(serverTimeResult.ServerTime).UtcDateTime;
-            var time = serverTime - DateTime.UtcNow;
-            await toolService.CacheService.SetCacheValueAsync("TimeStampOffset", time);
-            offset = time;
-        }
-        return offset;
+        if (confidence < 0m || confidence > 1m)
+            return 1.0m;
+
+        return confidence;
     }
 }
