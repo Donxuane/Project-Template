@@ -12,14 +12,12 @@ namespace TradingBot.Percistance.Services.Main;
 
 public class BinanceClientService : IBinanceClientService
 {
-    private readonly IConfiguration _configuration;
     private readonly HttpClient _httpClient;
     private static string? _apiKey;
     private static string? _secretKey;
 
     public BinanceClientService(IConfiguration configuration, HttpClient httpClient)
     {
-        _configuration = configuration;
         _httpClient = httpClient;
         var baseUrl = configuration.GetSection("BaseURL").Get<string>();
         _apiKey = configuration.GetSection("ApiKey").Get<string>();
@@ -52,7 +50,6 @@ public class BinanceClientService : IBinanceClientService
             );
 
         string queryString = string.Join("&", requestDict.Select(kv => $"{kv.Key}={kv.Value}"));
-
 
         if (enableSignature)
         {

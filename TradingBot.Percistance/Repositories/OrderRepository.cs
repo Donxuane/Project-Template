@@ -11,9 +11,6 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
 {
     public async Task<Guid> InsertAsync(Order order, CancellationToken cancellationToken = default)
     {
-        if (order.Id == Guid.Empty)
-            order.Id = Guid.NewGuid();
-
         const string sql = """
             INSERT INTO orders
                 (id, exchange_order_id, symbol, side, status, price, quantity, created_at, updated_at)

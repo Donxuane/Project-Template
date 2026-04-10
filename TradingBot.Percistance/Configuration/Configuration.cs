@@ -10,7 +10,6 @@ using TradingBot.Percistance.Services;
 using TradingBot.Percistance.Services.Main;
 using TradingBot.Percistance.Services.Shared;
 using TradingBot.Percistance.Repositories;
-using TradingBot.Shared.Shared.Enums;
 using TradingBot.Shared.Shared.Settings;
 
 namespace TradingBot.Percistance.Configuration;
@@ -23,7 +22,6 @@ public static class Configuration
         services.AddScoped<IBinanceEndpointsService, BinanceEndpointService>();
         services.AddScoped<IBinanceSettingsService, BinanceSettingsService>();
         services.AddScoped<ISlicerService, SlicerService>();
-        services.AddScoped<IMemoryCacheService, MemoryCacheService>();
         services.AddScoped<IRedisCacheService, RedisCacheService>();
         services.AddScoped<IOrderValidator, OrderValidator>();
         services.AddScoped<ICacheService, CacheService>();
@@ -42,16 +40,6 @@ public static class Configuration
         services.AddScoped<Func<IBinanceSettingsService>>(x => x.GetRequiredService<IBinanceSettingsService>);
         services.AddScoped<Func<ISlicerService>>(x => x.GetRequiredService<ISlicerService>);
         services.AddScoped<Func<IBinanceEndpointsService>>(x => x.GetRequiredService<IBinanceEndpointsService>);
-        services.AddScoped<Func<CacheType,IBaseCacheService>>(x => key =>
-        {
-            return key switch
-            {
-                CacheType.Memory => x.GetRequiredService<IMemoryCacheService>(),
-                CacheType.Redis => x.GetRequiredService<IRedisCacheService>(),
-                _ => throw new NotImplementedException("Service not found")
-            };
-        });
-        services.AddScoped<Func<ICacheService>>(x => x.GetRequiredService<ICacheService>);
         services.AddScoped<Func<IOrderValidator>>(x => x.GetRequiredService<IOrderValidator>);
         services.AddScoped<Func<IAICLinetService>>(x => x.GetRequiredService<IAICLinetService>);
         services.AddScoped<Func<IRedisCacheService>>(x => x.GetRequiredService<IRedisCacheService>);

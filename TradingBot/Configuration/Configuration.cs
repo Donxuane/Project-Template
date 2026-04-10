@@ -10,11 +10,6 @@ public static class Configuration
         Log.Logger = new LoggerConfiguration()
             .WriteTo.Console()
             .CreateLogger();
-        services.AddLogging(options =>
-        {
-            options.ClearProviders();
-            options.AddSerilog();
-        });
         return services;
     }
 
