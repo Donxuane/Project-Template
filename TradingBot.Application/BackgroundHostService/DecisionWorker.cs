@@ -45,7 +45,6 @@ public class DecisionWorker(
                     await ProcessSymbolAsync(symbol, settings, correlationId, stoppingToken);
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(settings.IntervalSeconds), stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -69,13 +68,6 @@ public class DecisionWorker(
     {
         try
         {
-            using var scope = scopeFactory.CreateScope();
-            var tradeDecisionService = scope.ServiceProvider.GetRequiredService<TradeDesicionService>();
-            var riskManagementService = scope.ServiceProvider.GetRequiredService<IRiskManagementService>();
-            var tradeExecutionService = scope.ServiceProvider.GetRequiredService<ITradeExecutionService>();
-            var tradeCooldownService = scope.ServiceProvider.GetRequiredService<ITradeCooldownService>();
-            var tradeIdempotencyService = scope.ServiceProvider.GetRequiredService<ITradeIdempotencyService>();
-
             var decision = await tradeDecisionService.MakeDesicion(symbol, settings.Quantity, stoppingToken);
             var decisionId = CreateDecisionId(symbol, settings.Quantity, decision, settings.IdempotencyWindowSeconds);
 

@@ -2,7 +2,6 @@
 
 public enum Assets
 {
-    ETH,
     BTC,
     LTC,
     BNB,

@@ -27,7 +27,6 @@ public class TimeSyncWorker(IServiceScopeFactory scopeFactory, ILogger<TimeSyncW
             try
             {
                 await SyncTimeAsync(stoppingToken);
-                await Task.Delay(TimeSpan.FromSeconds(IntervalSeconds), stoppingToken);
             }
             catch (OperationCanceledException)
             {

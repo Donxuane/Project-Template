@@ -72,11 +72,6 @@ public class BalanceSyncWorker(IServiceScopeFactory scopeFactory, ILogger<Balanc
             return;
         }
 
-        var count = 0;
-        foreach (var b in response.Balances)
-        {
-            if (cancellationToken.IsCancellationRequested)
-                break;
 
             var free = decimal.TryParse(b.Free, NumberStyles.Any, CultureInfo.InvariantCulture, out var f) ? f : 0m;
             var locked = decimal.TryParse(b.Locked, NumberStyles.Any, CultureInfo.InvariantCulture, out var l) ? l : 0m;
