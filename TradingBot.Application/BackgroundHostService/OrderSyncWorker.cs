@@ -3,11 +3,9 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
-using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Extentions;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
-using TradingBot.Domain.Models.GeneralApis;
 using TradingBot.Domain.Models.TradingEndpoints;
 using BinanceOrderResponse = TradingBot.Domain.Models.TradingEndpoints.OrderResponse;
 
@@ -54,14 +52,13 @@ public class OrderSyncWorker(IServiceScopeFactory scopeFactory, ILogger<OrderSyn
         var orderRepository = scope.ServiceProvider.GetRequiredService<IOrderRepository>();
         var orderStatusService = scope.ServiceProvider.GetRequiredService<IOrderStatusService>();
         var toolService = scope.ServiceProvider.GetRequiredService<IToolService>();
+        var timeSyncService = scope.ServiceProvider.GetRequiredService<ITimeSyncService>();
 
         var openOrders = await orderRepository.GetOpenOrdersAsync(null, 50, cancellationToken);
         if (openOrders.Count == 0)
             return;
 
-        var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-        var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>(
-            null, serverTimeEndpoint, false);
+        var adjustedTimestamp = await timeSyncService.GetAdjustedTimestampAsync(cancellationToken);
 
         var queryEndpoint = toolService.BinanceEndpointsService.GetEndpoint(TradingBot.Domain.Enums.Endpoints.Trading.QueryOrder);
 
@@ -82,7 +79,7 @@ public class OrderSyncWorker(IServiceScopeFactory scopeFactory, ILogger<OrderSyn
                 {
                     Symbol = order.Symbol.ToString(),
                     OrderId = order.ExchangeOrderId.Value,
-                    Timestamp = serverTime.ServerTime,
+                    Timestamp = adjustedTimestamp,
                     RecvWindow = 30000
                 };
 
@@ -117,7 +114,7 @@ public class OrderSyncWorker(IServiceScopeFactory scopeFactory, ILogger<OrderSyn
                     if (updated)
                         logger.LogDebug("Order {OrderId} set to TradesSyncPending", order.Id);
                 }
-
+                
                 if (exchangeStatus == OrderStatuses.CANCELED)
                     logger.LogInformation("Order {OrderId} canceled on exchange", order.Id);
             }

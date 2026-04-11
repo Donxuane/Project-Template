@@ -9,7 +9,6 @@ using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.AccountInformation;
-using TradingBot.Domain.Models.GeneralApis;
 using TradingBot.Domain.Models.Trading;
 
 namespace TradingBot.Application.BackgroundHostService;
@@ -60,6 +59,7 @@ public class TradeSyncWorker(IServiceScopeFactory scopeFactory, ILogger<TradeSyn
         var tradeExecutionRepository = scope.ServiceProvider.GetRequiredService<ITradeExecutionRepository>();
         var orderStatusService = scope.ServiceProvider.GetRequiredService<IOrderStatusService>();
         var toolService = scope.ServiceProvider.GetRequiredService<IToolService>();
+        var timeSyncService = scope.ServiceProvider.GetRequiredService<ITimeSyncService>();
 
         var toSync = new List<Order>();
 
@@ -98,9 +98,7 @@ public class TradeSyncWorker(IServiceScopeFactory scopeFactory, ILogger<TradeSyn
         if (toSync.Count == 0)
             return;
 
-        var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-        var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>(
-            null, serverTimeEndpoint, false);
+        var adjustedTimestamp = await timeSyncService.GetAdjustedTimestampAsync(cancellationToken);
         var tradesEndpoint = toolService.BinanceEndpointsService.GetEndpoint(Account.Trades);
 
         foreach (var order in toSync)
@@ -121,7 +119,7 @@ public class TradeSyncWorker(IServiceScopeFactory scopeFactory, ILogger<TradeSyn
                 {
                     Symbol = order.Symbol.ToString(),
                     OrderId = order.ExchangeOrderId,
-                    Timestamp = serverTime.ServerTime,
+                    Timestamp = adjustedTimestamp,
                     RecvWindow = 30000
                 };
 

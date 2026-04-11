@@ -1,4 +1,5 @@
-﻿using TradingBot.Domain.Enums.Binance;
+﻿using TradingBot.Domain.Enums;
+using TradingBot.Domain.Enums.Binance;
 
 namespace TradingBot.Domain.Extentions;
 
@@ -10,7 +11,18 @@ public static class ExtentionMappers
             : OrderStatuses.NEW;
 
     public static decimal ToDecimal(this string stringDecimal) =>
-        decimal.TryParse(stringDecimal, out var value) 
-        ? value 
+        decimal.TryParse(stringDecimal, out var value)
+        ? value
         : 0;
+
+    public static Assets? ToAssests(this TradingSymbol tradingSymbol)
+    {
+        var symbol = tradingSymbol.ToString().Replace("USDT", "");
+        if (Enum.TryParse<Assets>(symbol, out var value))
+        {
+            return value;
+        }
+        return null;
+    }
 }
+

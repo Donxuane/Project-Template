@@ -9,7 +9,6 @@ using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Extentions;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
-using TradingBot.Domain.Models.GeneralApis;
 using TradingBot.Domain.Models.Trading;
 using TradingBot.Domain.Models.TradingEndpoints;
 
@@ -21,6 +20,7 @@ public class PlaceSpotOrderCommandHandler(
     ITradeExecutionRepository tradeExecutionRepository,
     IOrderStatusService orderStatusService,
     IRiskManagementService riskManagementService,
+    ITimeSyncService timeSyncService,
     IPriceCacheService priceCacheService,
     ILogger<PlaceSpotOrderCommandHandler> logger) : IRequestHandler<PlaceSpotOrderCommand, PlaceSpotOrderResult>
 {
@@ -60,9 +60,7 @@ public class PlaceSpotOrderCommandHandler(
                 };
             }
 
-            var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-            var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>(
-                null, serverTimeEndpoint, false);
+            var adjustedTimestamp = await timeSyncService.GetAdjustedTimestampAsync(cancellationToken);
 
             var newOrderEndpoint = toolService.BinanceEndpointsService.GetEndpoint(TradingBot.Domain.Enums.Endpoints.Trading.NewOrder);
             var side = request.Side == OrderSide.BUY ? OrderSide.BUY : OrderSide.SELL;
@@ -75,7 +73,7 @@ public class PlaceSpotOrderCommandHandler(
                 Quantity = request.Quantity,
                 Price = request.IsLimitOrder ? price : 0m,
                 TimeInForce = request.IsLimitOrder ? TimeInForce.GTC : null,
-                Timestamp = serverTime.ServerTime,
+                Timestamp = adjustedTimestamp,
                 RecvWindow = 30000
             };
 

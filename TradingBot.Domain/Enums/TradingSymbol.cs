@@ -2,7 +2,7 @@
 
 public enum TradingSymbol
 {
-    BTCUSDT,  // Bitcoin / Tether — highest liquidity
+    BTCUSDT = 1,  // Bitcoin / Tether — highest liquidity
     ETHUSDT,  // Ethereum / Tether — highly traded
     BNBUSDT,  // Binance Coin / Tether — Binance native
     XRPUSDT,  // XRP / Tether — consistently high volume

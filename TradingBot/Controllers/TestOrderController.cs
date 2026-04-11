@@ -6,7 +6,6 @@ using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Extentions;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
-using TradingBot.Domain.Models.GeneralApis;
 using TradingBot.Domain.Models.Trading;
 using TradingBot.Domain.Models.TradingEndpoints;
 using BinanceOrderResponse = TradingBot.Domain.Models.TradingEndpoints.OrderResponse;
@@ -18,6 +17,7 @@ namespace TradingBot.Controllers;
 [Route("api/test")]
 public class TestOrderController(
     IToolService toolService,
+    ITimeSyncService timeSyncService,
     IOrderRepository orderRepository,
     ITradeExecutionRepository tradeExecutionRepository) : ControllerBase
 {
@@ -32,10 +32,8 @@ public class TestOrderController(
         if (request?.Quantity <= 0)
             return BadRequest("Quantity must be greater than zero.");
 
-        // 1. Get server time (GET /api/v3/time)
-        var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-        var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>(
-            null, serverTimeEndpoint, false);
+        // 1. Get adjusted timestamp from local time sync service
+        var adjustedTimestamp = await timeSyncService.GetAdjustedTimestampAsync(cancellationToken);
 
         // 2. Build and send MARKET order (POST /api/v3/order)
         var newOrderEndpoint = toolService.BinanceEndpointsService.GetEndpoint(Trading.NewOrder);
@@ -45,7 +43,7 @@ public class TestOrderController(
             Side = request.Side,
             Type = OrderTypes.MARKET,
             Quantity = request.Quantity,
-            Timestamp = serverTime.ServerTime,
+            Timestamp = adjustedTimestamp,
             RecvWindow = 30000
         };
 

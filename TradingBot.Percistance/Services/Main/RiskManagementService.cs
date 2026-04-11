@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
+using TradingBot.Domain.Extentions;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 
@@ -55,7 +56,7 @@ public class RiskManagementService(
         }
 
         var balances = await balanceRepository.GetLatestForAllAsync(cancellationToken);
-        var totalQuote = balances.Sum(b => (b.Symbol == symbol ? (b.Free + b.Locked) * resolvedPrice.Value : 0m));
+        var totalQuote = balances.Sum(b => (b.Symbol == symbol.ToAssests() ? (b.Free + b.Locked) * resolvedPrice.Value : 0m));
 
         if (totalQuote > 0)
         {

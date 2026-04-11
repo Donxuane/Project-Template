@@ -7,7 +7,10 @@ using System.Text;
 using TradingBot.Application.BackgroundHostService.Services;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
+using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
+using TradingBot.Domain.Interfaces.Services.Decision;
+using TradingBot.Domain.Models.Decision;
 
 namespace TradingBot.Application.BackgroundHostService;
 
@@ -35,14 +38,39 @@ public class DecisionWorker(
             "DecisionWorker started. Symbols={Symbols}, Quantity={Quantity}, Interval={IntervalSeconds}s, MinConfidence={MinConfidence}, TradeCooldownSeconds={TradeCooldownSeconds}, IdempotencyWindowSeconds={IdempotencyWindowSeconds}, ExecutionEnabled={ExecutionEnabled}, UseMarketOrders={UseMarketOrders}",
             string.Join(",", settings.Symbols), settings.Quantity, settings.IntervalSeconds, settings.MinConfidence, settings.TradeCooldownSeconds, settings.IdempotencyWindowSeconds, settings.ExecutionEnabled, settings.UseMarketOrders);
 
+        using (var warmupScope = scopeFactory.CreateScope())
+        {
+            var candleWarmupService = warmupScope.ServiceProvider.GetRequiredService<ICandleWarmupService>();
+            await candleWarmupService.WarmUpAsync(settings.Symbols, stoppingToken);
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 var correlationId = Guid.NewGuid().ToString("N");
-                foreach (var symbol in settings.Symbols)
+                using (var scope = scopeFactory.CreateScope())
                 {
-                    await ProcessSymbolAsync(symbol, settings, correlationId, stoppingToken);
+                    var tradeDecisionService = scope.ServiceProvider.GetRequiredService<TradeDesicionService>();
+                    var riskManagementService = scope.ServiceProvider.GetRequiredService<IRiskManagementService>();
+                    var tradeExecutionService = scope.ServiceProvider.GetRequiredService<ITradeExecutionService>();
+                    var tradeCooldownService = scope.ServiceProvider.GetRequiredService<ITradeCooldownService>();
+                    var tradeIdempotencyService = scope.ServiceProvider.GetRequiredService<ITradeIdempotencyService>();
+                    var tradeExecutionDesicionsRepository = scope.ServiceProvider.GetRequiredService<ITradeExecutionDesicionsRepository>();
+                    foreach (var symbol in settings.Symbols)
+                    {
+                        await ProcessSymbolAsync(
+                            symbol,
+                            settings,
+                            correlationId,
+                            stoppingToken,
+                            tradeDecisionService,
+                            riskManagementService,
+                            tradeExecutionService,
+                            tradeCooldownService,
+                            tradeIdempotencyService,
+                            tradeExecutionDesicionsRepository);
+                    }
                 }
 
             }
@@ -55,6 +83,7 @@ public class DecisionWorker(
                 logger.LogError(ex, "DecisionWorker cycle failed at {Time}", DateTime.UtcNow);
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
             }
+            await Task.Delay(TimeSpan.FromSeconds(settings.IntervalSeconds), stoppingToken);
         }
 
         logger.LogInformation("DecisionWorker stopped.");
@@ -64,7 +93,14 @@ public class DecisionWorker(
         TradingSymbol symbol,
         DecisionWorkerSettings settings,
         string correlationId,
-        CancellationToken stoppingToken)
+        CancellationToken stoppingToken,
+        TradeDesicionService tradeDecisionService,
+        IRiskManagementService riskManagementService,
+        ITradeExecutionService tradeExecutionService,
+        ITradeCooldownService tradeCooldownService,
+        ITradeIdempotencyService tradeIdempotencyService,
+        ITradeExecutionDesicionsRepository tradeExecutionDesicionsRepository
+        )
     {
         try
         {
@@ -74,7 +110,18 @@ public class DecisionWorker(
             logger.LogInformation(
                 "DecisionWorker decision generated: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Action={Action}, Confidence={Confidence:F4}, Reason={Reason}",
                 correlationId, decisionId, symbol, decision.Action, decision.Confidence, decision.Reason);
+            var executionDesicion = new TradeExecutionDecisions
+            {
+                CorrelationId = correlationId,
+                DecisionId = decisionId,
+                Symbol = symbol,
+                Action = decision.Action,
+                Confidence = decision.Confidence,
+                Reason = decision.Reason,
+                MinConfidence = settings.MinConfidence
+            };
 
+            var executionId = await tradeExecutionDesicionsRepository.AddDesicionAsync(executionDesicion);
             if (decision.Action == TradeSignal.Hold)
                 return;
 
@@ -83,6 +130,7 @@ public class DecisionWorker(
                 logger.LogInformation(
                     "DecisionWorker execution skipped: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Reason=LowConfidence, Confidence={Confidence:F4}, Threshold={Threshold:F4}",
                     correlationId, decisionId, symbol, decision.Confidence, settings.MinConfidence);
+
                 return;
             }
 
@@ -108,6 +156,10 @@ public class DecisionWorker(
                 logger.LogInformation(
                     "DecisionWorker execution skipped: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Reason=CooldownActive, RemainingSeconds={RemainingSeconds}, LastTradeAtUtc={LastTradeAtUtc}",
                     correlationId, decisionId, symbol, cooldown.RemainingSeconds, cooldown.LastTradeAtUtc);
+                executionDesicion.IsInCooldown = cooldown.IsInCooldown;
+                executionDesicion.CooldownRemainingSeconds = cooldown.RemainingSeconds;
+                executionDesicion.CooldownLastTrade = cooldown.LastTradeAtUtc;
+                await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
                 return;
             }
 
@@ -116,6 +168,8 @@ public class DecisionWorker(
                 logger.LogInformation(
                     "DecisionWorker execution skipped: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Reason=IdempotencyDuplicate",
                     correlationId, decisionId, symbol);
+                executionDesicion.IdempotencyDuplicate = true;
+                await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
                 return;
             }
 
@@ -128,11 +182,17 @@ public class DecisionWorker(
                 side,
                 stoppingToken);
 
+            executionDesicion.Side = side;
+            executionDesicion.StopLossPrice = riskResult.StopLossPrice;
+            executionDesicion.TakeProfitPrice = riskResult.TakeProfitPrice;
+            executionDesicion.RiskIsAllowed = riskResult.IsAllowed;
+            executionDesicion.RiskReason = riskResult.Reason;
             if (!riskResult.IsAllowed)
             {
                 logger.LogWarning(
                     "DecisionWorker execution rejected by risk: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, Reason={Reason}",
                     correlationId, decisionId, symbol, side, riskResult.Reason);
+                await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
                 return;
             }
 
@@ -157,12 +217,18 @@ public class DecisionWorker(
                 logger.LogInformation(
                     "DecisionWorker execution succeeded: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, LocalOrderId={LocalOrderId}, ExchangeOrderId={ExchangeOrderId}",
                     correlationId, decisionId, symbol, side, executionResult.LocalOrderId, executionResult.ExchangeOrderId);
+                executionDesicion.ExecutionSuccess = executionResult.Success;
+                executionDesicion.LocalOrderId = executionResult.LocalOrderId;
+                executionDesicion.ExchangeOrderId = executionResult.ExchangeOrderId;
+                await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
                 return;
             }
 
             logger.LogWarning(
                 "DecisionWorker execution failed: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, Error={Error}",
                 correlationId, decisionId, symbol, side, executionResult.Error);
+            executionDesicion.ExecutionError = executionResult.Error;
+            await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
         }
         catch (OperationCanceledException)
         {
@@ -226,7 +292,7 @@ public class DecisionWorker(
         var bucket = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / Math.Max(1, idempotencyWindowSeconds);
         var raw = $"{symbol}|{decision.Action}|{quantity:F8}|{decision.Candidate?.Price ?? 0m:F8}|{decision.Confidence:F4}|{bucket}";
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
-        return Convert.ToHexString(bytes)[..16];
+        return Convert.ToHexString(bytes)[..32];
     }
 
     private sealed class DecisionWorkerSettings

@@ -37,6 +37,26 @@ public class BalanceRepository(IDbConnection connection) : IBalanceRepository
         return id;
     }
 
+    public async Task UpsertLatestAsync(List<BalanceSnapshot> snapshot, CancellationToken cancellationToken = default)
+    {
+
+        const string sql = """
+            INSERT INTO balance_snapshots
+                (asset, symbol, side, free, locked)
+            VALUES
+                (@Asset, @Symbol, @Side, @Free, @Locked)
+            ON CONFLICT (asset, symbol)
+            DO UPDATE SET
+                side = EXCLUDED.side,
+                free = EXCLUDED.free,
+                locked = EXCLUDED.locked,
+                updated_at = now()
+            RETURNING id;
+            """;
+
+        await connection.ExecuteAsync(sql, snapshot);
+    }
+
     public async Task<BalanceSnapshot?> GetLatestAsync(string asset, TradingSymbol symbol, CancellationToken cancellationToken = default)
     {
         const string sql = """

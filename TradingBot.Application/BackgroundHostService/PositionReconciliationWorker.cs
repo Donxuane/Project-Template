@@ -6,7 +6,6 @@ using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.AccountInformation;
-using TradingBot.Domain.Models.GeneralApis;
 
 namespace TradingBot.Application.BackgroundHostService;
 
@@ -49,17 +48,16 @@ public class PositionReconciliationWorker(IServiceScopeFactory scopeFactory, ILo
         using var scope = scopeFactory.CreateScope();
         var toolService = scope.ServiceProvider.GetRequiredService<IToolService>();
         var positionRepository = scope.ServiceProvider.GetRequiredService<IPositionRepository>();
+        var timeSyncService = scope.ServiceProvider.GetRequiredService<ITimeSyncService>();
 
-        var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-        var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>(
-            null, serverTimeEndpoint, false);
+        var adjustedTimestamp = await timeSyncService.GetAdjustedTimestampAsync(cancellationToken);
 
         var accountEndpoint = toolService.BinanceEndpointsService.GetEndpoint(Account.AccoutnInformation);
         var account = await toolService.BinanceClientService.Call<AccountInfoResponse, AccountInfoRequest>(
             new AccountInfoRequest
             {
                 RecvWindow = 30000,
-                Timestamp = serverTime.ServerTime
+                Timestamp = adjustedTimestamp
             }, accountEndpoint, true);
 
         if (account?.Balances == null)

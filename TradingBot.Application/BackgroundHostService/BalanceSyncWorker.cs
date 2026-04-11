@@ -8,7 +8,6 @@ using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.AccountInformation;
-using TradingBot.Domain.Models.GeneralApis;
 using TradingBot.Domain.Models.Trading;
 
 namespace TradingBot.Application.BackgroundHostService;
@@ -52,10 +51,9 @@ public class BalanceSyncWorker(IServiceScopeFactory scopeFactory, ILogger<Balanc
         using var scope = scopeFactory.CreateScope();
         var toolService = scope.ServiceProvider.GetRequiredService<IToolService>();
         var balanceRepository = scope.ServiceProvider.GetRequiredService<IBalanceRepository>();
+        var timeSyncService = scope.ServiceProvider.GetRequiredService<ITimeSyncService>();
 
-        var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-        var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>(
-            null, serverTimeEndpoint, false);
+        var adjustedTimestamp = await timeSyncService.GetAdjustedTimestampAsync(cancellationToken);
 
         var accountEndpoint = toolService.BinanceEndpointsService.GetEndpoint(Account.AccoutnInformation);
         var response = await toolService.BinanceClientService.Call<AccountInfoResponse, AccountInfoRequest>(
@@ -63,7 +61,7 @@ public class BalanceSyncWorker(IServiceScopeFactory scopeFactory, ILogger<Balanc
             {
                 OmitZeroBalances = false,
                 RecvWindow = 30000,
-                Timestamp = serverTime.ServerTime
+                Timestamp = adjustedTimestamp
             }, accountEndpoint, true);
 
         if (response?.Balances == null || response.Balances.Count == 0)
@@ -73,22 +71,16 @@ public class BalanceSyncWorker(IServiceScopeFactory scopeFactory, ILogger<Balanc
         }
 
 
-            var free = decimal.TryParse(b.Free, NumberStyles.Any, CultureInfo.InvariantCulture, out var f) ? f : 0m;
-            var locked = decimal.TryParse(b.Locked, NumberStyles.Any, CultureInfo.InvariantCulture, out var l) ? l : 0m;
+        var balance = response.Balances.Select(x => new BalanceSnapshot
+        {
+            Asset = x.Asset,
+            Symbol = Enum.TryParse<Assets>(x.Asset, out var result) ? result : default,
+            Side = OrderSide.BUY,
+            Free = decimal.TryParse(x.Free, NumberStyles.Any, CultureInfo.InvariantCulture, out var f) ? f : 0m,
+            Locked = decimal.TryParse(x.Locked, NumberStyles.Any, CultureInfo.InvariantCulture, out var l) ? l : 0m
+        }).ToList();
+        await balanceRepository.UpsertLatestAsync(balance, cancellationToken);
 
-            var snapshot = new BalanceSnapshot
-            {
-                Asset = b.Asset,
-                Symbol = default,
-                Side = OrderSide.BUY,
-                Free = free,
-                Locked = locked
-            };
-
-            await balanceRepository.InsertAsync(snapshot, cancellationToken);
-            count++;
-        }
-
-        logger.LogInformation("BalanceSyncWorker saved {Count} balance snapshots at {Time}", count, DateTime.UtcNow);
+        logger.LogInformation("BalanceSyncWorker saved {Count} balance snapshots at {Time}", balance.Count, DateTime.UtcNow);
     }
 }

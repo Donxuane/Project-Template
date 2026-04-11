@@ -24,15 +24,25 @@ public static class Configuration
         //services.AddHostedService<BalanceSyncWorker>();
         //services.AddHostedService<TimeSyncWorker>();
         //services.AddHostedService<MarketDataWorker>();
-        services.AddHostedService<PositionReconciliationWorker>();
+        //services.AddHostedService<PositionReconciliationWorker>();
         services.AddHostedService<DecisionWorker>();
 
-        services.AddHostedService<TradeMonitorWorker>();
-        services.AddHostedService<AnalyticsWorker>();
+        //services.AddHostedService<TradeMonitorWorker>();
+        //services.AddHostedService<AnalyticsWorker>();
 
         services.AddScoped<IDecisionService, DecisionService>();
-        services.AddScoped<IStrategy, MovingAverageCrossoverStrategy>();
+        services.AddScoped<IMovingAverageStrategy, MovingAverageTrendStrategy>();
+        services.AddScoped<IStrategy>(sp => sp.GetRequiredService<IMovingAverageStrategy>());
         services.AddScoped<IMarketDataProvider, BinanceMarketDataProvider>();
+        services.AddSingleton<ICandleService, CandleService>();
+        services.AddSingleton<ICandleWarmupService, CandleWarmupService>();
+        services.AddSingleton<IMarketStateTracker, MarketStateTracker>();
+        services.AddSingleton<IPositionManager, PositionManager>();
+        services.AddScoped<IDataRequirementResolver, DataRequirementResolver>();
+        services.AddScoped<ITrendStateService, TrendStateService>();
+        services.AddScoped<IAtrService, AtrService>();
+        services.AddScoped<IVolatilityService, VolatilityService>();
+        services.AddScoped<IMarketConditionService, MarketConditionService>();
         services.AddScoped<IRiskEvaluator, RiskEvaluator>();
         services.AddScoped<IAIValidator, NoOpAIValidator>();
         services.AddScoped<TradeDesicionService>();

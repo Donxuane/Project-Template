@@ -38,6 +38,8 @@ public class TimeSyncWorker(IServiceScopeFactory scopeFactory, ILogger<TimeSyncW
                     DateTime.UtcNow, RetryDelaySeconds);
                 await Task.Delay(TimeSpan.FromSeconds(RetryDelaySeconds), stoppingToken);
             }
+
+            await Task.Delay(TimeSpan.FromSeconds(IntervalSeconds), stoppingToken);
         }
 
         logger.LogInformation("TimeSyncWorker stopped.");

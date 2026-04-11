@@ -3,23 +3,16 @@ using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.AccountInformation;
-using TradingBot.Domain.Models.GeneralApis;
 
 namespace TradingBot.Application.API;
 
-public class AccountApi(IToolService toolService, ILogger<AccountApi> logger)
+public class AccountApi(IToolService toolService, ITimeSyncService timeSyncService, ILogger<AccountApi> logger)
 {
     public async Task<AccountInfoResponse>? GetAccountInformation(bool omitZeroBalances)
     {
         try
         {
-            var serverTimeEndpoint = toolService.BinanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-            var serverTime = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>
-            (
-                null,
-                serverTimeEndpoint,
-                false
-            );
+            var adjustedTimestamp = await timeSyncService.GetAdjustedTimestampAsync();
             var accountInformationEndpoint = toolService.BinanceEndpointsService.GetEndpoint(Account.AccoutnInformation);
             var accountInformation = await toolService.BinanceClientService.Call<AccountInfoResponse, AccountInfoRequest>
             (
@@ -27,7 +20,7 @@ public class AccountApi(IToolService toolService, ILogger<AccountApi> logger)
                 {
                     OmitZeroBalances = omitZeroBalances,
                     RecvWindow = 30000,
-                    Timestamp = serverTime.ServerTime,
+                    Timestamp = adjustedTimestamp,
                 }, accountInformationEndpoint, true
             );
             return accountInformation;
