@@ -1,5 +1,6 @@
 ﻿using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
+using TradingBot.Shared.Shared.Models;
 
 namespace TradingBot.Domain.Extentions;
 
@@ -23,6 +24,16 @@ public static class ExtentionMappers
             return value;
         }
         return null;
+    }
+
+    public static BaseModelDto ToModel<TEnum>(this TEnum value)
+        where TEnum : struct, Enum
+    {
+        return new BaseModelDto
+        {
+            Id = Convert.ToInt32(value),
+            Name = value.ToString()
+        };
     }
 }
 

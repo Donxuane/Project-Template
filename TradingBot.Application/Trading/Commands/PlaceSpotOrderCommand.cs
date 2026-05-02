@@ -10,7 +10,11 @@ public record PlaceSpotOrderCommand(
     OrderSide Side,
     decimal Quantity,
     decimal? Price,
-    bool IsLimitOrder
+    bool IsLimitOrder,
+    OrderSource OrderSource = OrderSource.Unknown,
+    CloseReason CloseReason = CloseReason.None,
+    long? ParentPositionId = null,
+    string? CorrelationId = null
 ) : IRequest<PlaceSpotOrderResult>;
 
 public sealed class PlaceSpotOrderResult

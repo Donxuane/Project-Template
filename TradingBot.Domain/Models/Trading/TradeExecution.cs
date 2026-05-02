@@ -13,6 +13,10 @@ public class TradeExecution
     public OrderSide Side { get; set; }
     public decimal Price { get; set; }
     public decimal Quantity { get; set; }
+    public decimal QuoteQuantity { get; set; }
+    public decimal Fee { get; set; }
+    public string? FeeAsset { get; set; }
+    public DateTime? PositionProcessedAt { get; set; }
     public DateTime ExecutedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

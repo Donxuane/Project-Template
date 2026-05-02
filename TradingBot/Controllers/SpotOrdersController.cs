@@ -21,7 +21,16 @@ public class SpotOrdersController(IMediator mediator) : ControllerBase
         bool isLimitOrder,
         CancellationToken cancellationToken)
     {
-        var command = new PlaceSpotOrderCommand(symbol, side, quantity, price, isLimitOrder);
+        var command = new PlaceSpotOrderCommand(
+            symbol,
+            side,
+            quantity,
+            price,
+            isLimitOrder,
+            OrderSource.Api,
+            side == OrderSide.SELL ? CloseReason.ManualClose : CloseReason.None,
+            ParentPositionId: null,
+            CorrelationId: Guid.NewGuid().ToString("N"));
         var result = await mediator.Send(command, cancellationToken);
         if (!result.Success)
             return BadRequest(result);

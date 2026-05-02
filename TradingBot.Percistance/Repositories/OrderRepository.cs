@@ -13,9 +13,9 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
     {
         const string sql = """
             INSERT INTO orders
-                (exchange_order_id, symbol, side, status, processing_status, sync_retry_count, price, quantity, created_at, updated_at)
+                (exchange_order_id, correlationid, parent_position_id, order_source, close_reason, symbol, side, status, processing_status, sync_retry_count, price, quantity, created_at, updated_at)
             VALUES
-                (@ExchangeOrderId, @Symbol, @Side, @Status, @ProcessingStatus, @SyncRetryCount, @Price, @Quantity, @CreatedAt, @UpdatedAt)
+                (@ExchangeOrderId, @CorrelationId, @ParentPositionId, @OrderSource, @CloseReason, @Symbol, @Side, @Status, @ProcessingStatus, @SyncRetryCount, @Price, @Quantity, @CreatedAt, @UpdatedAt)
             RETURNING id;
             """;
 
@@ -25,6 +25,10 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
         var param = new
         {
             order.ExchangeOrderId,
+            order.CorrelationId,
+            order.ParentPositionId,
+            OrderSource = (int)order.OrderSource,
+            CloseReason = (int)order.CloseReason,
             Symbol = (int)order.Symbol,
             Side = (int)order.Side,
             Status = (int)order.Status,
@@ -48,6 +52,10 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
             UPDATE orders
             SET
                 exchange_order_id = @ExchangeOrderId,
+                correlationid = @CorrelationId,
+                parent_position_id = @ParentPositionId,
+                order_source = @OrderSource,
+                close_reason = @CloseReason,
                 symbol = @Symbol,
                 side = @Side,
                 status = @Status,
@@ -63,6 +71,10 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
         {
             order.Id,
             order.ExchangeOrderId,
+            order.CorrelationId,
+            order.ParentPositionId,
+            OrderSource = (int)order.OrderSource,
+            CloseReason = (int)order.CloseReason,
             Symbol = (int)order.Symbol,
             Side = (int)order.Side,
             Status = (int)order.Status,
@@ -78,7 +90,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
     public async Task<Order?> GetByIdAsync(long id, CancellationToken cancellationToken = default)
     {
         const string sql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE id = @Id;
             """;
@@ -90,7 +102,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
     public async Task<Order?> GetByExchangeOrderIdAsync(long exchangeOrderId, CancellationToken cancellationToken = default)
     {
         const string sql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE exchange_order_id = @ExchangeOrderId;
             """;
@@ -110,7 +122,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
         };
 
         const string baseSql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE status = ANY(@Statuses)
             """;
@@ -142,7 +154,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
         };
 
         const string sql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE status = ANY(@Statuses)
             ORDER BY created_at DESC;
@@ -157,7 +169,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
     public async Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusAsync(ProcessingStatus processingStatus, int? limit = null, CancellationToken cancellationToken = default)
     {
         var sql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE processing_status = @ProcessingStatus
             ORDER BY created_at ASC
@@ -180,7 +192,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
         };
 
         var baseSql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE status = ANY(@Statuses)
             """;
@@ -203,7 +215,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
     public async Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusForWorkerAsync(IDbTransaction transaction, ProcessingStatus processingStatus, int limit, CancellationToken cancellationToken = default)
     {
         const string sql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE processing_status = @ProcessingStatus
             ORDER BY created_at ASC

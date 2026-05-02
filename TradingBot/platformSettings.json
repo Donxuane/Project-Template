@@ -26,7 +26,7 @@
   },
 
   "RateLimiterSettings": {
-   // "_comment": "Reference limits from exchange metadata; mainly informational unless explicitly enforced.",
+    // "_comment": "Reference limits from exchange metadata; mainly informational unless explicitly enforced.",
     "REQUEST_WEIGHT": {
       "interval": "MINUTE",
       "intervalNum": 1,
@@ -43,8 +43,15 @@
       "limit": 61000
     }
   },
+  "Binance": {
+    "Http": {
+      "TimeoutSeconds": 15,
+      "RetryCount": 3,
+      "RetryBaseDelayMilliseconds": 300
+    }
+  },
   "GeneralApis": {
-   // "_comment": "Endpoint definitions consumed by BinanceEndpointService for general Binance APIs.",
+    // "_comment": "Endpoint definitions consumed by BinanceEndpointService for general Binance APIs.",
     "TestConnectivity": {
       "api": "/api/v3/ping",
       "type": "GET",
@@ -66,6 +73,7 @@
   },
   "MarketData": {
     //"_comment": "Endpoint definitions for market data operations.",
+    "MaxConcurrency": 3,
     "OrderBookDepth": {
       "api": "/api/v3/depth",
       "type": "GET",
@@ -129,8 +137,30 @@
   },
   "Trading": {
     //"_comment": "Endpoint definitions for order placement and order management. CooldownSeconds is used by DecisionWorker pre-execution guard.",
+    //"_comment_Mode": "Trading mode used by DecisionEngine mapping (Spot or Futures). Spot keeps SELL as close/reduce-long intent.",
+    "Mode": "Spot",
+    //"_comment_AllowAddToPosition": "When false in Spot mode, BUY is blocked if an open long position already exists for symbol.",
+    "AllowAddToPosition": false,
+    //"_comment_MaxOpenPositionsPerSymbol": "Maximum number of simultaneous open positions per symbol; current spot pipeline effectively supports one.",
+    "MaxOpenPositionsPerSymbol": 1,
+    //"_comment_UseFeeGuard": "If true, decision-based entries are blocked when expected net profit after fees/spread is too small.",
+    "UseFeeGuard": true,
+    //"_comment_FeeRatePercent": "Estimated trading fee per side in percent (e.g., 0.1 means 0.1%).",
+    "FeeRatePercent": 0.1,
+    //"_comment_EstimatedSpreadPercent": "Estimated spread/slippage cost in percent for profitability checks.",
+    "EstimatedSpreadPercent": 0.05,
+    //"_comment_MinExpectedMovePercent": "Minimum gross expected move percent required before allowing a decision-based trade.",
+    "MinExpectedMovePercent": 0.3,
+    //"_comment_MinNetProfitPercent": "Minimum expected net profit percent (after fees/spread) required before execution.",
+    "MinNetProfitPercent": 0.15,
     //"_comment_CooldownSeconds": "Per-symbol cooldown after successful execution; prevents opening another trade too soon.",
     "CooldownSeconds": 60,
+    //"_comment_ReconciliationQuantityTolerance": "Absolute tolerance for local position vs exchange free+locked quantity reconciliation.",
+    "ReconciliationQuantityTolerance": 0.00000001,
+    //"_comment_ReconciliationIntervalMinutes": "Reconciliation worker run interval in minutes.",
+    "ReconciliationIntervalMinutes": 10,
+    //"_comment_ReconciliationSnapshotMaxAgeSeconds": "Maximum allowed age for latest balance snapshot before marked stale.",
+    "ReconciliationSnapshotMaxAgeSeconds": 180,
     "NewOrder": {
       "api": "/api/v3/order",
       "type": "POST",
@@ -267,6 +297,15 @@
     "DefaultStopLossPercent": 1.0,
     //"_comment_DefaultTakeProfitPercent": "Default take-profit distance from entry, in percent, used to compute TakeProfitPrice.",
     "DefaultTakeProfitPercent": 2.0
+  }
+  ,
+  "DecisionEngine": {
+    "MinConfidence": 0.70,
+    "Strategies": {
+      "MovingAverageCrossover": {
+        "MinConfidence": 0.70
+      }
+    }
   }
 
 }

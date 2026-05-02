@@ -16,4 +16,11 @@ public sealed class TrendAnalysisResult
     public bool IsBearishCrossover { get; init; }
     public decimal MaDistancePercent { get; init; }
     public decimal ShortMaSlopePercent { get; init; }
+    public decimal LongMaSlopePercent { get; init; }
+    public decimal TrendStrengthPercent { get; init; }
+    public bool IsTrendStrong { get; init; }
+    public bool IsBullishTrendConfirmed { get; init; }
+    public bool IsBearishTrendConfirmed { get; init; }
+    public MarketRegime MarketRegime { get; init; } = MarketRegime.Unknown;
+    public int ConfidenceScore { get; init; }
 }

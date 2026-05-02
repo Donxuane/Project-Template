@@ -2,6 +2,10 @@ CREATE TABLE IF NOT EXISTS orders
 (
     id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     exchange_order_id bigint      UNIQUE,
+    correlationid     varchar(40) NULL,
+    parent_position_id bigint     NULL,
+    order_source      integer     NOT NULL DEFAULT 0,
+    close_reason      integer     NOT NULL DEFAULT 0,
     symbol            integer    NOT NULL,
     side              integer    NOT NULL,
     status            integer    NOT NULL,

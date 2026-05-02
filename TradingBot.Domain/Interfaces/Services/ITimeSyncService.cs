@@ -8,4 +8,6 @@ public interface ITimeSyncService
 {
     /// <summary>Returns current time in milliseconds (Unix) adjusted by the cached offset, or local time if no offset yet.</summary>
     Task<long> GetAdjustedTimestampAsync(CancellationToken cancellationToken = default);
+    /// <summary>Refreshes offset from Binance server time and stores it to cache.</summary>
+    Task<long> RefreshOffsetAsync(CancellationToken cancellationToken = default);
 }

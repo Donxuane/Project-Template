@@ -8,9 +8,16 @@ public class TradeExecutionDecisions
     public long? Id { get; set; }
     public string CorrelationId { get; set; } = null!;
     public string? DecisionId { get; set; }
+    public string? IdempotencyKey { get; set; }
+    public string? StrategyName { get; set; }
     public TradingSymbol? Symbol { get; set; }
     public TradeSignal? Action { get; set; }
+    public TradeSignal? RawSignal { get; set; }
+    public TradingMode? TradingMode { get; set; }
+    public TradeExecutionIntent? ExecutionIntent { get; set; }
     public OrderSide? Side { get; set; }
+    public DecisionStatus? DecisionStatus { get; set; }
+    public GuardStage? GuardStage { get; set; }
     public decimal? Confidence { get; set; }
     public decimal? MinConfidence { get; set; }
     public string? Reason { get; set; }

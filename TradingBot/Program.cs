@@ -1,4 +1,5 @@
 using TradingBot.Application.Configuration;
+using TradingBot.Application.DecisionEngine;
 using TradingBot.Configuration;
 using TradingBot.Percistance.Configuration;
 using Serilog;
@@ -15,6 +16,7 @@ builder.Host.UseSerilog();
 builder.Services.ConfigureServices(builder.Configuration);
 builder.Services.ConfigApplication();
 builder.Services.AddSettings(builder.Configuration);
+builder.Services.Configure<TrendStateSettings>(builder.Configuration.GetSection(TrendStateSettings.SectionName));
 
 var app = builder.Build();
 

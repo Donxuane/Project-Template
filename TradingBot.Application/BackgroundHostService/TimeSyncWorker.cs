@@ -15,7 +15,7 @@ namespace TradingBot.Application.BackgroundHostService;
 /// </summary>
 public class TimeSyncWorker(IServiceScopeFactory scopeFactory, ILogger<TimeSyncWorker> logger) : BackgroundService
 {
-    private const int IntervalSeconds = 60;
+    private const int IntervalSeconds = 20;
     private const int RetryDelaySeconds = 10;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

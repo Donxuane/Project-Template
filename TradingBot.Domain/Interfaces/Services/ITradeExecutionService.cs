@@ -15,6 +15,9 @@ public sealed class TradeExecutionRequest
     public TradingSymbol Symbol { get; init; }
     public OrderSide Side { get; init; }
     public decimal Quantity { get; init; }
+    public TradingMode TradingMode { get; init; } = TradingMode.Spot;
+    public TradeSignal RawSignal { get; init; } = TradeSignal.Hold;
+    public TradeExecutionIntent ExecutionIntent { get; init; } = TradeExecutionIntent.None;
 }
 
 public sealed class TradeExecutionResult

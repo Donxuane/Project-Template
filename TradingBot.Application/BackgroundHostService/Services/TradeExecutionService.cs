@@ -2,6 +2,9 @@ using MediatR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using TradingBot.Application.Trading.Commands;
+using TradingBot.Domain.Enums;
+using TradingBot.Domain.Enums.Binance;
+using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 
 namespace TradingBot.Application.BackgroundHostService.Services;
@@ -9,6 +12,7 @@ namespace TradingBot.Application.BackgroundHostService.Services;
 public class TradeExecutionService(
     IMediator mediator,
     IConfiguration configuration,
+    IPositionRepository positionRepository,
     ILogger<TradeExecutionService> logger) : ITradeExecutionService
 {
     public async Task<TradeExecutionResult> ExecuteMarketOrderAsync(
@@ -22,23 +26,34 @@ public class TradeExecutionService(
         {
             try
             {
+                var parentPositionId = await ResolveParentPositionIdAsync(request, cancellationToken);
+                var closeReason = request.ExecutionIntent == TradeExecutionIntent.CloseLong
+                    ? CloseReason.OppositeSignal
+                    : CloseReason.None;
+
                 var orderResult = await mediator.Send(
                     new PlaceSpotOrderCommand(
                         request.Symbol,
                         request.Side,
                         request.Quantity,
                         Price: null,
-                        IsLimitOrder: false),
+                        IsLimitOrder: false,
+                        OrderSource: OrderSource.DecisionWorker,
+                        CloseReason: closeReason,
+                        ParentPositionId: parentPositionId,
+                        CorrelationId: request.CorrelationId),
                     cancellationToken);
 
                 if (orderResult.Success)
                 {
                     logger.LogInformation(
-                        "Trade execution success: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, LocalOrderId={LocalOrderId}, ExchangeOrderId={ExchangeOrderId}, Attempt={Attempt}",
+                        "Trade execution success: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, LocalOrderId={LocalOrderId}, ExchangeOrderId={ExchangeOrderId}, Attempt={Attempt}",
                         request.CorrelationId,
                         request.DecisionId,
                         request.Symbol,
                         request.Side,
+                        request.TradingMode,
+                        request.ExecutionIntent,
                         orderResult.Order?.Id,
                         orderResult.Order?.ExchangeOrderId,
                         attempt);
@@ -54,11 +69,13 @@ public class TradeExecutionService(
                 if (attempt > retryCount || !IsTransientError(orderResult.Error))
                 {
                     logger.LogWarning(
-                        "Trade execution failed without retry: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, Attempt={Attempt}, Error={Error}",
+                        "Trade execution failed without retry: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, Attempt={Attempt}, Error={Error}",
                         request.CorrelationId,
                         request.DecisionId,
                         request.Symbol,
                         request.Side,
+                        request.TradingMode,
+                        request.ExecutionIntent,
                         attempt,
                         orderResult.Error);
 
@@ -71,11 +88,13 @@ public class TradeExecutionService(
 
                 var delay = TimeSpan.FromMilliseconds(baseDelayMs * Math.Pow(2, attempt - 1));
                 logger.LogWarning(
-                    "Trade execution transient failure, retrying: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, Attempt={Attempt}, DelayMs={DelayMs}, Error={Error}",
+                    "Trade execution transient failure, retrying: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, Attempt={Attempt}, DelayMs={DelayMs}, Error={Error}",
                     request.CorrelationId,
                     request.DecisionId,
                     request.Symbol,
                     request.Side,
+                    request.TradingMode,
+                    request.ExecutionIntent,
                     attempt,
                     delay.TotalMilliseconds,
                     orderResult.Error);
@@ -86,11 +105,13 @@ public class TradeExecutionService(
                 var delay = TimeSpan.FromMilliseconds(baseDelayMs * Math.Pow(2, attempt - 1));
                 logger.LogWarning(
                     ex,
-                    "Trade execution transient exception, retrying: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, Attempt={Attempt}, DelayMs={DelayMs}",
+                    "Trade execution transient exception, retrying: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, Attempt={Attempt}, DelayMs={DelayMs}",
                     request.CorrelationId,
                     request.DecisionId,
                     request.Symbol,
                     request.Side,
+                    request.TradingMode,
+                    request.ExecutionIntent,
                     attempt,
                     delay.TotalMilliseconds);
                 await Task.Delay(delay, cancellationToken);
@@ -99,11 +120,13 @@ public class TradeExecutionService(
             {
                 logger.LogError(
                     ex,
-                    "Trade execution fatal exception: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}",
+                    "Trade execution fatal exception: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}",
                     request.CorrelationId,
                     request.DecisionId,
                     request.Symbol,
-                    request.Side);
+                    request.Side,
+                    request.TradingMode,
+                    request.ExecutionIntent);
 
                 return new TradeExecutionResult
                 {
@@ -141,5 +164,19 @@ public class TradeExecutionService(
                || text.Contains("rate limit")
                || text.Contains("network")
                || text.Contains("unavailable");
+    }
+
+    private async Task<long?> ResolveParentPositionIdAsync(TradeExecutionRequest request, CancellationToken cancellationToken)
+    {
+        if (request.TradingMode != TradingMode.Spot)
+            return null;
+
+        var openPosition = await positionRepository.GetOpenPositionAsync(request.Symbol, cancellationToken);
+        if (openPosition is null)
+            return null;
+
+        return request.ExecutionIntent is TradeExecutionIntent.CloseLong or TradeExecutionIntent.OpenLong
+            ? openPosition.Id
+            : null;
     }
 }

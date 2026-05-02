@@ -10,5 +10,6 @@ public interface ITradeExecutionRepository
     Task<TradeExecution?> GetByExchangeTradeIdAsync(long exchangeTradeId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<TradeExecution>> GetByOrderIdAsync(long orderId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<TradeExecution>> GetBySymbolAsync(TradingSymbol symbol, CancellationToken cancellationToken = default);
+    Task MarkPositionProcessedByOrderAsync(long orderId, DateTime processedAtUtc, CancellationToken cancellationToken = default);
 }
 

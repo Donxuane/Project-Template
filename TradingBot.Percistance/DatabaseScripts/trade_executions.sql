@@ -8,6 +8,10 @@ CREATE TABLE IF NOT EXISTS trade_executions
     side              integer    NOT NULL,
     price             numeric(38, 18) NOT NULL,
     quantity          numeric(38, 18) NOT NULL,
+    quote_quantity    numeric(38, 18) NOT NULL DEFAULT 0,
+    fee               numeric(38, 18) NOT NULL DEFAULT 0,
+    fee_asset         varchar(20),
+    position_processed_at timestamptz NULL,
     executed_at       timestamptz NOT NULL,
     created_at        timestamptz NOT NULL,
     updated_at        timestamptz NOT NULL

@@ -7,6 +7,10 @@ public class Order
 {
     public long Id { get; set; }
     public long? ExchangeOrderId { get; set; }
+    public string? CorrelationId { get; set; }
+    public long? ParentPositionId { get; set; }
+    public OrderSource OrderSource { get; set; } = OrderSource.Unknown;
+    public CloseReason CloseReason { get; set; } = CloseReason.None;
     public TradingSymbol Symbol { get; set; }
     public OrderSide Side { get; set; }
     public OrderStatuses Status { get; set; }

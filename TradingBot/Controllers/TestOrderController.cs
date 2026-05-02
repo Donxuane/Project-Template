@@ -57,6 +57,10 @@ public class TestOrderController(
         var order = new Order
         {
             ExchangeOrderId = response.OrderId,
+            CorrelationId = Guid.NewGuid().ToString("N"),
+            ParentPositionId = null,
+            OrderSource = OrderSource.Manual,
+            CloseReason = request.Side == OrderSide.SELL ? CloseReason.ManualClose : CloseReason.None,
             Symbol = request.Symbol,
             Side = request.Side,
             Status = response.Status.ToOrderStatus(),

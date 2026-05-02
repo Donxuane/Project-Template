@@ -29,6 +29,7 @@ public static class Configuration
         services.AddSingleton<IBinanceRateLimiter, BinanceRateLimiter>();
         services.AddSingleton<ITradeIdempotencyService, TradeIdempotencyService>();
         services.AddScoped<IPriceCacheService, PriceCacheService>();
+        services.AddScoped<IBinanceOrderNormalizationService, BinanceOrderNormalizationService>();
 
         //repositories
         services.AddScoped<IOrderRepository, OrderRepository>();
@@ -36,6 +37,7 @@ public static class Configuration
         services.AddScoped<IPositionRepository, PositionRepository>();
         services.AddScoped<IBalanceRepository, BalanceRepository>();
         services.AddScoped<IAnalyticsRepository, AnalyticsRepository>();
+        services.AddScoped<IReportingsRepository, ReportingsRepository>();
         services.AddScoped<ITradeExecutionDesicionsRepository, TradeExecutionDesicionsRepository>();
 
         //risk management
@@ -53,7 +55,16 @@ public static class Configuration
         //orchestrators
         services.AddScoped<IToolService, ToolService>();
         //client services
-        services.AddHttpClient<IBinanceClientService, BinanceClientService>();
+        services.AddHttpClient<IBinanceClientService, BinanceClientService>((sp, client) =>
+        {
+            var cfg = sp.GetRequiredService<IConfiguration>();
+            var baseUrl = cfg.GetValue<string>("BaseURL");
+            if (!string.IsNullOrWhiteSpace(baseUrl))
+                client.BaseAddress = new Uri(baseUrl);
+
+            var timeoutSeconds = Math.Max(1, cfg.GetValue<int?>("Binance:Http:TimeoutSeconds") ?? 15);
+            client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+        });
         services.AddHttpClient<IAICLinetService, AIClientService>();
 
         services.AddSingleton<IConnectionMultiplexer>(x =>

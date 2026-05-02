@@ -15,9 +15,9 @@ public class TradeExecutionRepository(IDbConnection connection) : ITradeExecutio
 
         const string sql = """
             INSERT INTO trade_executions
-                (order_id, exchange_order_id, exchange_trade_id, symbol, side, price, quantity, executed_at, created_at, updated_at)
+                (order_id, exchange_order_id, exchange_trade_id, symbol, side, price, quantity, quote_quantity, fee, fee_asset, position_processed_at, executed_at, created_at, updated_at)
             VALUES
-                (@OrderId, @ExchangeOrderId, @ExchangeTradeId, @Symbol, @Side, @Price, @Quantity, @ExecutedAt, @CreatedAt, @UpdatedAt)
+                (@OrderId, @ExchangeOrderId, @ExchangeTradeId, @Symbol, @Side, @Price, @Quantity, @QuoteQuantity, @Fee, @FeeAsset, @PositionProcessedAt, @ExecutedAt, @CreatedAt, @UpdatedAt)
             RETURNING id;
             """;
 
@@ -30,6 +30,10 @@ public class TradeExecutionRepository(IDbConnection connection) : ITradeExecutio
             Side = (int)execution.Side,
             execution.Price,
             execution.Quantity,
+            execution.QuoteQuantity,
+            execution.Fee,
+            execution.FeeAsset,
+            execution.PositionProcessedAt,
             execution.ExecutedAt,
             execution.CreatedAt,
             execution.UpdatedAt
@@ -43,7 +47,8 @@ public class TradeExecutionRepository(IDbConnection connection) : ITradeExecutio
     {
         const string sql = """
             SELECT id, order_id AS OrderId, exchange_order_id AS ExchangeOrderId, exchange_trade_id AS ExchangeTradeId,
-                   symbol, side, price, quantity, executed_at AS ExecutedAt, created_at AS CreatedAt, updated_at AS UpdatedAt
+                   symbol, side, price, quantity, quote_quantity AS QuoteQuantity, fee, fee_asset AS FeeAsset,
+                   position_processed_at AS PositionProcessedAt, executed_at AS ExecutedAt, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM trade_executions
             WHERE id = @Id;
             """;
@@ -56,7 +61,8 @@ public class TradeExecutionRepository(IDbConnection connection) : ITradeExecutio
     {
         const string sql = """
             SELECT id, order_id AS OrderId, exchange_order_id AS ExchangeOrderId, exchange_trade_id AS ExchangeTradeId,
-                   symbol, side, price, quantity, executed_at AS ExecutedAt, created_at AS CreatedAt, updated_at AS UpdatedAt
+                   symbol, side, price, quantity, quote_quantity AS QuoteQuantity, fee, fee_asset AS FeeAsset,
+                   position_processed_at AS PositionProcessedAt, executed_at AS ExecutedAt, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM trade_executions
             WHERE exchange_trade_id = @ExchangeTradeId;
             """;
@@ -69,7 +75,8 @@ public class TradeExecutionRepository(IDbConnection connection) : ITradeExecutio
     {
         const string sql = """
             SELECT id, order_id AS OrderId, exchange_order_id AS ExchangeOrderId, exchange_trade_id AS ExchangeTradeId,
-                   symbol, side, price, quantity, executed_at AS ExecutedAt, created_at AS CreatedAt, updated_at AS UpdatedAt
+                   symbol, side, price, quantity, quote_quantity AS QuoteQuantity, fee, fee_asset AS FeeAsset,
+                   position_processed_at AS PositionProcessedAt, executed_at AS ExecutedAt, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM trade_executions
             WHERE order_id = @OrderId
             ORDER BY executed_at ASC;
@@ -84,7 +91,8 @@ public class TradeExecutionRepository(IDbConnection connection) : ITradeExecutio
     {
         const string sql = """
             SELECT id, order_id AS OrderId, exchange_order_id AS ExchangeOrderId, exchange_trade_id AS ExchangeTradeId,
-                   symbol, side, price, quantity, executed_at AS ExecutedAt, created_at AS CreatedAt, updated_at AS UpdatedAt
+                   symbol, side, price, quantity, quote_quantity AS QuoteQuantity, fee, fee_asset AS FeeAsset,
+                   position_processed_at AS PositionProcessedAt, executed_at AS ExecutedAt, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM trade_executions
             WHERE symbol = @Symbol
             ORDER BY executed_at DESC;
@@ -93,6 +101,26 @@ public class TradeExecutionRepository(IDbConnection connection) : ITradeExecutio
         var result = await connection.QueryAsync<TradeExecution>(
             new CommandDefinition(sql, new { Symbol = (int)symbol }, cancellationToken: cancellationToken));
         return result.ToList();
+    }
+
+    public async Task MarkPositionProcessedByOrderAsync(long orderId, DateTime processedAtUtc, CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            UPDATE trade_executions
+            SET position_processed_at = COALESCE(position_processed_at, @ProcessedAt),
+                updated_at = @ProcessedAt
+            WHERE order_id = @OrderId;
+            """;
+
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                sql,
+                new
+                {
+                    OrderId = orderId,
+                    ProcessedAt = processedAtUtc
+                },
+                cancellationToken: cancellationToken));
     }
 }
 

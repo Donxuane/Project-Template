@@ -16,4 +16,10 @@ public sealed class MarketConditionResult
     public decimal Atr { get; init; }
     public decimal NormalizedAtr { get; init; }
     public decimal SymbolSensitivity { get; init; } = 1.0m;
+    public bool IsConfirmedBreakout { get; init; }
+    public int MarketConditionScore { get; init; }
+    public bool RequiresBreakoutConfirmation { get; init; }
+    public bool RequiresReducedPositionSize { get; init; }
+    public bool IsUnsafeVolatility { get; init; }
+    public string? Warning { get; init; }
 }

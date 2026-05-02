@@ -1,7 +1,8 @@
-using System.Globalization;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
@@ -12,21 +13,27 @@ namespace TradingBot.Application.BackgroundHostService;
 /// <summary>
 /// Every 10 minutes, fetches GET /api/v3/account and compares balances with local positions; logs mismatches.
 /// </summary>
-public class PositionReconciliationWorker(IServiceScopeFactory scopeFactory, ILogger<PositionReconciliationWorker> logger) : BackgroundService
+public class PositionReconciliationWorker(
+    IServiceScopeFactory scopeFactory,
+    IConfiguration configuration,
+    ILogger<PositionReconciliationWorker> logger) : BackgroundService
 {
-    private const int IntervalMinutes = 10;
+    private const int DefaultIntervalMinutes = 10;
     private const int RetryDelaySeconds = 30;
+    private const decimal DefaultTolerance = 0.00000001m;
+    private const int DefaultSnapshotMaxAgeSeconds = 180;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        logger.LogInformation("PositionReconciliationWorker started. Interval: {Interval} min", IntervalMinutes);
+        var intervalMinutes = Math.Max(1, configuration.GetValue<int?>("Trading:ReconciliationIntervalMinutes") ?? DefaultIntervalMinutes);
+        logger.LogInformation("PositionReconciliationWorker started. Interval: {Interval} min", intervalMinutes);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 await ReconcileAsync(stoppingToken);
-                await Task.Delay(TimeSpan.FromMinutes(IntervalMinutes), stoppingToken);
+                await Task.Delay(TimeSpan.FromMinutes(intervalMinutes), stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -48,7 +55,25 @@ public class PositionReconciliationWorker(IServiceScopeFactory scopeFactory, ILo
         using var scope = scopeFactory.CreateScope();
         var toolService = scope.ServiceProvider.GetRequiredService<IToolService>();
         var positionRepository = scope.ServiceProvider.GetRequiredService<IPositionRepository>();
+        var balanceRepository = scope.ServiceProvider.GetRequiredService<IBalanceRepository>();
+        var reconciliationService = scope.ServiceProvider.GetRequiredService<IPositionReconciliationService>();
         var timeSyncService = scope.ServiceProvider.GetRequiredService<ITimeSyncService>();
+
+        var tradingModeRaw = configuration.GetValue<string?>("Trading:Mode");
+        if (!Enum.TryParse(tradingModeRaw, true, out TradingMode tradingMode))
+            tradingMode = TradingMode.Spot;
+
+        if (tradingMode != TradingMode.Spot)
+        {
+            logger.LogInformation(
+                "PositionReconciliationWorker skipped because trading mode is not Spot. TradingMode={TradingMode}",
+                tradingMode);
+            return;
+        }
+
+        var tolerance = configuration.GetValue<decimal?>("Trading:ReconciliationQuantityTolerance") ?? DefaultTolerance;
+        var maxOpenPositionsPerSymbol = Math.Max(1, configuration.GetValue<int?>("Trading:MaxOpenPositionsPerSymbol") ?? 1);
+        var snapshotMaxAgeSeconds = Math.Max(10, configuration.GetValue<int?>("Trading:ReconciliationSnapshotMaxAgeSeconds") ?? DefaultSnapshotMaxAgeSeconds);
 
         var adjustedTimestamp = await timeSyncService.GetAdjustedTimestampAsync(cancellationToken);
 
@@ -66,40 +91,86 @@ public class PositionReconciliationWorker(IServiceScopeFactory scopeFactory, ILo
             return;
         }
 
-        var localPositions = await positionRepository.GetOpenPositionsAsync(cancellationToken);
-        var balanceByAsset = account.Balances.ToDictionary(
-            b => b.Asset,
-            b =>
-            {
-                var free = decimal.TryParse(b.Free, NumberStyles.Any, CultureInfo.InvariantCulture, out var f) ? f : 0m;
-                var locked = decimal.TryParse(b.Locked, NumberStyles.Any, CultureInfo.InvariantCulture, out var l) ? l : 0m;
-                return free + locked;
-            },
-            StringComparer.OrdinalIgnoreCase);
+        var localOpenPositions = await positionRepository.GetOpenPositionsAsync(cancellationToken);
+        var localClosedPositions = await positionRepository.GetClosedPositionsAsync(cancellationToken);
+        var latestSnapshots = await balanceRepository.GetLatestForAllAsync(cancellationToken);
+        var latestSnapshotsByAsset = latestSnapshots
+            .GroupBy(x => x.Asset, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(x => x.UpdatedAt == default ? x.CreatedAt : x.UpdatedAt).First(),
+                StringComparer.OrdinalIgnoreCase);
 
-        foreach (var position in localPositions)
+        var results = reconciliationService.EvaluateSpot(
+            localOpenPositions,
+            localClosedPositions,
+            account.Balances,
+            latestSnapshotsByAsset,
+            tolerance,
+            maxOpenPositionsPerSymbol,
+            TimeSpan.FromSeconds(snapshotMaxAgeSeconds));
+
+        foreach (var result in results)
         {
-            var baseAsset = position.Symbol.ToString().Replace("USDT", "", StringComparison.OrdinalIgnoreCase);
-            if (string.IsNullOrEmpty(baseAsset))
-                continue;
-
-            if (!balanceByAsset.TryGetValue(baseAsset, out var exchangeBalance))
+            if (result.IsMatched)
             {
-                logger.LogWarning(
-                    "PositionReconciliationWorker: mismatch Symbol={Symbol} BaseAsset={BaseAsset} LocalQuantity={LocalQty} Exchange balance not found",
-                    position.Symbol, baseAsset, position.Quantity);
+                logger.LogInformation(
+                    "PositionReconciliation matched. Symbol={Symbol} Asset={Asset} LocalOpenQuantity={LocalOpenQuantity} ExchangeFree={ExchangeFree} ExchangeLocked={ExchangeLocked} ExchangeTotal={ExchangeTotal} Difference={Difference} Tolerance={Tolerance} Severity={Severity} Reason={Reason}",
+                    result.Symbol,
+                    result.Asset,
+                    result.LocalOpenQuantity,
+                    result.ExchangeFree,
+                    result.ExchangeLocked,
+                    result.ExchangeTotal,
+                    result.Difference,
+                    tolerance,
+                    result.Severity,
+                    result.Reason);
                 continue;
             }
 
-            var localQty = position.Quantity;
-            if (Math.Abs(localQty - exchangeBalance) > 0.00000001m)
+            if (string.Equals(result.Severity, "Error", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogError(
+                    "PositionReconciliation mismatch. Symbol={Symbol} Asset={Asset} LocalOpenQuantity={LocalOpenQuantity} ExchangeFree={ExchangeFree} ExchangeLocked={ExchangeLocked} ExchangeTotal={ExchangeTotal} Difference={Difference} Tolerance={Tolerance} Severity={Severity} Reason={Reason}",
+                    result.Symbol,
+                    result.Asset,
+                    result.LocalOpenQuantity,
+                    result.ExchangeFree,
+                    result.ExchangeLocked,
+                    result.ExchangeTotal,
+                    result.Difference,
+                    tolerance,
+                    result.Severity,
+                    result.Reason);
+            }
+            else
             {
                 logger.LogWarning(
-                    "PositionReconciliationWorker: mismatch Symbol={Symbol} BaseAsset={BaseAsset} LocalQuantity={LocalQty} ExchangeBalance={ExchangeBalance}",
-                    position.Symbol, baseAsset, localQty, exchangeBalance);
+                    "PositionReconciliation mismatch. Symbol={Symbol} Asset={Asset} LocalOpenQuantity={LocalOpenQuantity} ExchangeFree={ExchangeFree} ExchangeLocked={ExchangeLocked} ExchangeTotal={ExchangeTotal} Difference={Difference} Tolerance={Tolerance} Severity={Severity} Reason={Reason}",
+                    result.Symbol,
+                    result.Asset,
+                    result.LocalOpenQuantity,
+                    result.ExchangeFree,
+                    result.ExchangeLocked,
+                    result.ExchangeTotal,
+                    result.Difference,
+                    tolerance,
+                    result.Severity,
+                    result.Reason);
             }
         }
 
-        logger.LogDebug("PositionReconciliationWorker: reconciled {Count} positions", localPositions.Count);
+        var mismatchCount = results.Count(x => !x.IsMatched);
+        var errorCount = results.Count(x => !x.IsMatched && string.Equals(x.Severity, "Error", StringComparison.OrdinalIgnoreCase));
+        logger.LogInformation(
+            "PositionReconciliationWorker completed. TradingMode={TradingMode}, OpenPositions={OpenPositions}, ClosedPositions={ClosedPositions}, Checks={Checks}, Mismatches={MismatchCount}, Errors={ErrorCount}, Tolerance={Tolerance}",
+            tradingMode,
+            localOpenPositions.Count,
+            localClosedPositions.Count,
+            results.Count,
+            mismatchCount,
+            errorCount,
+            tolerance);
     }
 }

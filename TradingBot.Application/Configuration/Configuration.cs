@@ -18,17 +18,17 @@ public static class Configuration
         services.AddScoped<TradingApi>();
         services.AddScoped<GeneralApi>();
         //Background Services
-        //services.AddHostedService<OrderSyncWorker>();
-        //services.AddHostedService<TradeSyncWorker>();
-        //services.AddHostedService<PositionWorker>();
-        //services.AddHostedService<BalanceSyncWorker>();
-        //services.AddHostedService<TimeSyncWorker>();
-        //services.AddHostedService<MarketDataWorker>();
-        //services.AddHostedService<PositionReconciliationWorker>();
+        services.AddHostedService<OrderSyncWorker>();
+        services.AddHostedService<TradeSyncWorker>();
+        services.AddHostedService<PositionWorker>();
+        services.AddHostedService<BalanceSyncWorker>();
+        services.AddHostedService<TimeSyncWorker>();
+        services.AddHostedService<MarketDataWorker>();
+        services.AddHostedService<PositionReconciliationWorker>();
         services.AddHostedService<DecisionWorker>();
 
-        //services.AddHostedService<TradeMonitorWorker>();
-        //services.AddHostedService<AnalyticsWorker>();
+        services.AddHostedService<TradeMonitorWorker>();
+        services.AddHostedService<AnalyticsWorker>();
 
         services.AddScoped<IDecisionService, DecisionService>();
         services.AddScoped<IMovingAverageStrategy, MovingAverageTrendStrategy>();
@@ -45,10 +45,15 @@ public static class Configuration
         services.AddScoped<IMarketConditionService, MarketConditionService>();
         services.AddScoped<IRiskEvaluator, RiskEvaluator>();
         services.AddScoped<IAIValidator, NoOpAIValidator>();
-        services.AddScoped<TradeDesicionService>();
+        services.AddScoped<TradeDecisionService>();
         services.AddScoped<ITradeExecutionService, TradeExecutionService>();
         services.AddScoped<ITradeCooldownService, TradeCooldownService>();
+        services.AddScoped<IPositionExecutionGuard, PositionExecutionGuard>();
+        services.AddScoped<IFeeProfitGuard, FeeProfitGuard>();
+        services.AddScoped<IConfidenceGate, ConfidenceGate>();
         services.AddScoped<ITradeAnalyticsService, TradeAnalyticsService>();
+        services.AddScoped<IPositionAccountingService, PositionAccountingService>();
+        services.AddScoped<IPositionReconciliationService, PositionReconciliationService>();
 
         services.AddMediatR(config =>
         {

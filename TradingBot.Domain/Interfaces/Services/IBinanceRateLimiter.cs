@@ -6,5 +6,9 @@ namespace TradingBot.Domain.Interfaces.Services;
 public interface IBinanceRateLimiter
 {
     /// <summary>Waits until a request slot is available, then returns. Call before each Binance request.</summary>
-    Task WaitAsync(CancellationToken cancellationToken = default);
+    Task WaitAsync(
+        int requestWeight = 1,
+        bool isOrderRequest = false,
+        bool isRawRequest = true,
+        CancellationToken cancellationToken = default);
 }
