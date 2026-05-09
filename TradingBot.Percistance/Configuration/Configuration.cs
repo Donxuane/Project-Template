@@ -39,6 +39,7 @@ public static class Configuration
         services.AddScoped<IAnalyticsRepository, AnalyticsRepository>();
         services.AddScoped<IReportingsRepository, ReportingsRepository>();
         services.AddScoped<ITradeExecutionDesicionsRepository, TradeExecutionDesicionsRepository>();
+        services.AddScoped<ITradingHealthDiagnosticsRepository, TradingHealthDiagnosticsRepository>();
 
         //risk management
         services.AddScoped<IRiskManagementService, RiskManagementService>();

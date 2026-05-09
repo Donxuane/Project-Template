@@ -10,5 +10,7 @@ public interface IPositionRepository
     Task<Position?> GetOpenPositionAsync(TradingSymbol symbol, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Position>> GetOpenPositionsAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Position>> GetClosedPositionsAsync(CancellationToken cancellationToken = default);
+    Task<bool> TryMarkPositionClosingAsync(long positionId, CancellationToken cancellationToken = default);
+    Task ClearPositionClosingAsync(long positionId, CancellationToken cancellationToken = default);
 }
 

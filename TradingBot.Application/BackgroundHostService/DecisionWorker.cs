@@ -169,15 +169,14 @@ public class DecisionWorker(
                 MinConfidence = settings.MinExecutionConfidence
             };
 
-            if (decision.Action != TradeSignal.Hold)
-            {
-                var executionId = await tradeExecutionDesicionsRepository.AddDesicionAsync(executionDesicion);
-            }
+
+            var executionId = await tradeExecutionDesicionsRepository.AddDesicionAsync(executionDesicion);
+            
             if (decision.Action == TradeSignal.Hold)
             {
                 executionDesicion.ExecutionError = "Execution skipped - hold action.";
                 executionDesicion.DecisionStatus = DecisionStatus.Skipped;
-                //await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
+                await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
                 return;
             }
 

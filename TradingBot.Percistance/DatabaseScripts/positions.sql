@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS positions
     realized_pnl   numeric(38, 18) NOT NULL DEFAULT 0,
     unrealized_pnl numeric(38, 18) NOT NULL DEFAULT 0,
     is_open        boolean        NOT NULL DEFAULT true,
+    is_closing     boolean        NOT NULL DEFAULT false,
     created_at     timestamptz    NOT NULL,
     updated_at     timestamptz    NOT NULL
 );

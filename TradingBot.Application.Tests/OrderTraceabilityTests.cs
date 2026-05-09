@@ -209,5 +209,11 @@ public class OrderTraceabilityTests
 
         public Task<IReadOnlyList<Position>> GetClosedPositionsAsync(CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<Position>>(Array.Empty<Position>());
+
+        public Task<bool> TryMarkPositionClosingAsync(long positionId, CancellationToken cancellationToken = default)
+            => Task.FromResult(false);
+
+        public Task ClearPositionClosingAsync(long positionId, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
     }
 }

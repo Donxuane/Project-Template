@@ -297,8 +297,7 @@
     "DefaultStopLossPercent": 1.0,
     //"_comment_DefaultTakeProfitPercent": "Default take-profit distance from entry, in percent, used to compute TakeProfitPrice.",
     "DefaultTakeProfitPercent": 2.0
-  }
-  ,
+  },
   "DecisionEngine": {
     "MinConfidence": 0.70,
     "Strategies": {

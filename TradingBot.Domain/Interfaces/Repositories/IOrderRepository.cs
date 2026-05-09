@@ -13,6 +13,7 @@ public interface IOrderRepository
     Task<IReadOnlyList<Order>> GetOpenOrdersAsync(TradingSymbol? symbol = null, int? limit = null, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Order>> GetFilledOrdersAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusAsync(ProcessingStatus processingStatus, int? limit = null, CancellationToken cancellationToken = default);
+    Task<bool> HasActiveCloseOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default);
 
     /// <summary>For workers: locks rows with FOR UPDATE SKIP LOCKED, batch limited. Must run inside a transaction.</summary>
     Task<IReadOnlyList<Order>> GetOpenOrdersForWorkerAsync(IDbTransaction transaction, TradingSymbol? symbol, int limit, CancellationToken cancellationToken = default);

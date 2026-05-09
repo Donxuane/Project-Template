@@ -48,6 +48,7 @@ public class BalanceSyncWorker(IServiceScopeFactory scopeFactory, ILogger<Balanc
 
     private async Task SyncBalancesAsync(CancellationToken cancellationToken)
     {
+        var syncCorrelationId = Guid.NewGuid().ToString("N")[..32];
         using var scope = scopeFactory.CreateScope();
         var toolService = scope.ServiceProvider.GetRequiredService<IToolService>();
         var balanceRepository = scope.ServiceProvider.GetRequiredService<IBalanceRepository>();
@@ -66,7 +67,7 @@ public class BalanceSyncWorker(IServiceScopeFactory scopeFactory, ILogger<Balanc
 
         if (response?.Balances == null || response.Balances.Count == 0)
         {
-            logger.LogDebug("BalanceSyncWorker: no balances in account response");
+            logger.LogWarning("BalanceSyncWorker: no balances in account response. CorrelationId={CorrelationId}", syncCorrelationId);
             return;
         }
 
@@ -74,13 +75,24 @@ public class BalanceSyncWorker(IServiceScopeFactory scopeFactory, ILogger<Balanc
         var balance = response.Balances.Select(x => new BalanceSnapshot
         {
             Asset = x.Asset,
-            Symbol = Enum.TryParse<Assets>(x.Asset, out var result) ? result : default,
+            AssetId = Enum.TryParse<Assets>(x.Asset, out var result) ? result : default,
             Side = OrderSide.BUY,
             Free = decimal.TryParse(x.Free, NumberStyles.Any, CultureInfo.InvariantCulture, out var f) ? f : 0m,
             Locked = decimal.TryParse(x.Locked, NumberStyles.Any, CultureInfo.InvariantCulture, out var l) ? l : 0m
         }).ToList();
-        await balanceRepository.UpsertLatestAsync(balance, cancellationToken);
+        var writeResult = await balanceRepository.UpsertLatestAndAppendHistoryAsync(
+            balance,
+            source: "BinanceAccount",
+            syncCorrelationId: syncCorrelationId,
+            forceSnapshot: false,
+            cancellationToken);
 
-        logger.LogInformation("BalanceSyncWorker saved {Count} balance snapshots at {Time}", balance.Count, DateTime.UtcNow);
+        logger.LogInformation(
+            "BalanceSyncWorker completed. CorrelationId={CorrelationId} AssetsFetched={AssetsFetched} LatestUpserted={LatestRowsUpserted} HistoryInserted={HistoryRowsInserted} At={Time}",
+            syncCorrelationId,
+            writeResult.AssetsFetched,
+            writeResult.LatestRowsUpserted,
+            writeResult.HistoryRowsInserted,
+            DateTime.UtcNow);
     }
 }

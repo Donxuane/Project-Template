@@ -14,7 +14,8 @@ public class PositionAccountingServiceTests
     public void OpenLongPosition()
     {
         var order = CreateOrder(OrderSide.BUY);
-        var trades = new[] { CreateTrade(1, OrderSide.BUY, 100_000m, 1m) };
+        var executedAt = DateTime.UtcNow.AddSeconds(-12);
+        var trades = new[] { CreateTrade(1, OrderSide.BUY, 100_000m, 1m, executedAt: executedAt) };
 
         var result = _service.ApplyTrades(null, order, trades);
 
@@ -23,6 +24,7 @@ public class PositionAccountingServiceTests
         Assert.Equal(100_000m, result.Position.AveragePrice);
         Assert.True(result.PositionOpened);
         Assert.False(result.PositionClosed);
+        Assert.Equal(executedAt, result.Position.OpenedAt);
     }
 
     [Fact]
@@ -65,6 +67,23 @@ public class PositionAccountingServiceTests
         Assert.False(result.Position.IsOpen);
         Assert.True(result.PositionClosed);
         Assert.Equal(1_000m, result.RealizedPnlDelta);
+    }
+
+    [Fact]
+    public void FullyCloseLong_UsesExecutionPriceAsExitPrice_AndClosesQuantityToZero()
+    {
+        var current = CreatePosition(0.01m, 617.24m, TradingSymbol.BNBUSDT);
+        var order = CreateOrder(OrderSide.SELL, TradingSymbol.BNBUSDT);
+        var executedAt = DateTime.UtcNow.AddSeconds(-3);
+        var trades = new[] { CreateTrade(40, OrderSide.SELL, 618.01m, 0.01m, executedAt: executedAt) };
+
+        var result = _service.ApplyTrades(current, order, trades);
+
+        Assert.False(result.Position.IsOpen);
+        Assert.Equal(0m, result.Position.Quantity);
+        Assert.Equal(618.01m, result.Position.ExitPrice);
+        Assert.Equal(executedAt, result.Position.ClosedAt);
+        Assert.False(result.Position.IsClosing);
     }
 
     [Fact]
@@ -124,6 +143,7 @@ public class PositionAccountingServiceTests
         Assert.True(result.Position.IsOpen);
         Assert.Equal(623m, result.Position.AveragePrice);
         Assert.Equal(0.02m, result.RealizedPnlDelta);
+        Assert.False(result.Position.IsClosing);
     }
 
     [Fact]
@@ -156,6 +176,22 @@ public class PositionAccountingServiceTests
 
         Assert.Equal(995m, result.RealizedPnlDelta);
         Assert.Equal(5m, result.FeeDelta);
+    }
+
+    [Fact]
+    public void BaseAssetBuyFee_IsNotSubtractedAsQuoteFee()
+    {
+        var order = CreateOrder(OrderSide.BUY, TradingSymbol.BNBUSDT);
+        var trades = new[]
+        {
+            CreateTrade(31, OrderSide.BUY, 600m, 0.01m, fee: 0.00001m, feeAsset: "BNB")
+        };
+
+        var result = _service.ApplyTrades(null, order, trades);
+
+        Assert.Equal(0m, result.FeeDelta);
+        Assert.Equal(0m, result.RealizedPnlDelta);
+        Assert.True(result.Position.IsOpen);
     }
 
     [Fact]
@@ -227,7 +263,8 @@ public class PositionAccountingServiceTests
         decimal price,
         decimal quantity,
         decimal fee = 0m,
-        string? feeAsset = null)
+        string? feeAsset = null,
+        DateTime? executedAt = null)
     {
         return new TradeExecution
         {
@@ -241,7 +278,7 @@ public class PositionAccountingServiceTests
             Quantity = quantity,
             Fee = fee,
             FeeAsset = feeAsset,
-            ExecutedAt = DateTime.UtcNow
+            ExecutedAt = executedAt ?? DateTime.UtcNow
         };
     }
 }

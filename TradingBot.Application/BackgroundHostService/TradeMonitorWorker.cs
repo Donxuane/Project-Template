@@ -25,7 +25,6 @@ public class TradeMonitorWorker(
     private const int DefaultMaxTradeDurationMinutes = 60;
     private const int DefaultCloseOrderMaxRetries = 3;
     private const int DefaultCloseOrderRetryDelayMs = 1000;
-    private const decimal DefaultFeeRate = 0.001m;
     private const bool DefaultEnableTimeExit = true;
     private const bool DefaultEnableStopLossExit = true;
     private const bool DefaultEnableTakeProfitExit = true;
@@ -42,12 +41,11 @@ public class TradeMonitorWorker(
         var settings = ReadSettings();
 
         logger.LogInformation(
-            "TradeMonitorWorker started. Interval={IntervalSeconds}s, MaxDuration={MaxDurationMinutes}m, Retries={Retries}, RetryDelayMs={RetryDelayMs}, FeeRate={FeeRate}, StopLossExit={StopLossExit}, TakeProfitExit={TakeProfitExit}, TimeExit={TimeExit}, TrailingStop={TrailingStop}, BreakEven={BreakEven}",
+            "TradeMonitorWorker started. Interval={IntervalSeconds}s, MaxDuration={MaxDurationMinutes}m, Retries={Retries}, RetryDelayMs={RetryDelayMs}, StopLossExit={StopLossExit}, TakeProfitExit={TakeProfitExit}, TimeExit={TimeExit}, TrailingStop={TrailingStop}, BreakEven={BreakEven}",
             settings.IntervalSeconds,
             settings.MaxTradeDurationMinutes,
             settings.CloseOrderMaxRetries,
             settings.CloseOrderRetryDelayMs,
-            settings.FeeRate,
             settings.EnableStopLossExit,
             settings.EnableTakeProfitExit,
             settings.EnableTimeExit,
@@ -81,6 +79,7 @@ public class TradeMonitorWorker(
         using var scope = scopeFactory.CreateScope();
 
         var positionRepository = scope.ServiceProvider.GetRequiredService<IPositionRepository>();
+        var orderRepository = scope.ServiceProvider.GetRequiredService<IOrderRepository>();
         var priceCacheService = scope.ServiceProvider.GetRequiredService<IPriceCacheService>();
         var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
         var tradeIdempotencyService = scope.ServiceProvider.GetRequiredService<ITradeIdempotencyService>();
@@ -189,10 +188,26 @@ public class TradeMonitorWorker(
                 continue;
             }
 
-            // TODO: Replace with repository-level atomic operation to prevent cross-process close races:
-            // Task<bool> TryMarkPositionClosingAsync(long positionId, CancellationToken cancellationToken)
-            position.IsClosing = true;
-            await positionRepository.UpsertAsync(position, cancellationToken);
+            if (await orderRepository.HasActiveCloseOrderForPositionAsync(position.Id, cancellationToken))
+            {
+                logger.LogInformation(
+                    "TradeMonitorWorker skipped close request because an active close order already exists. PositionId={PositionId}, Symbol={Symbol}, ExitReason={ExitReason}",
+                    position.Id,
+                    position.Symbol,
+                    reason);
+                continue;
+            }
+
+            var closeLockAcquired = await positionRepository.TryMarkPositionClosingAsync(position.Id, cancellationToken);
+            if (!closeLockAcquired)
+            {
+                logger.LogInformation(
+                    "TradeMonitorWorker skipped close request because position is already closing or unavailable. PositionId={PositionId}, Symbol={Symbol}, ExitReason={ExitReason}",
+                    position.Id,
+                    position.Symbol,
+                    reason);
+                continue;
+            }
 
             try
             {
@@ -210,46 +225,25 @@ public class TradeMonitorWorker(
 
                 if (closeResult is null || !closeResult.Success)
                 {
-                    position.IsClosing = false;
-                    await positionRepository.UpsertAsync(position, cancellationToken);
+                    await positionRepository.ClearPositionClosingAsync(position.Id, cancellationToken);
                     continue;
                 }
 
-                var exitPrice = ResolveExitPrice(closeResult, currentPrice.Value, position);
-                var executedQuantity = ResolveExecutedQuantity(closeResult, quantity, position);
-                var pnl = CalculateRealizedPnlWithFees(position, exitPrice, executedQuantity, settings.FeeRate);
-
-                position.IsOpen = false;
-                position.IsClosing = false;
-                position.ExitPrice = exitPrice;
-                position.ExitReason = reason.Value;
-                position.ClosedAt = DateTime.UtcNow;
-                position.RealizedPnl += pnl;
-                position.UnrealizedPnl = 0m;
-
-                await positionRepository.UpsertAsync(position, cancellationToken);
-                HighestPriceSinceEntry.TryRemove(position.Id, out _);
-                LowestPriceSinceEntry.TryRemove(position.Id, out _);
-
                 logger.LogInformation(
-                    "TradeMonitorWorker close success: PositionId={PositionId}, Symbol={Symbol}, Side={Side}, ExitReason={ExitReason}, LocalOrderId={LocalOrderId}, ExchangeOrderId={ExchangeOrderId}, ExitPrice={ExitPrice}, ExecutedQuantity={ExecutedQuantity}, PnL={PnL}",
+                    "TradeMonitorWorker close order placed. Final position accounting is deferred to PositionWorker. PositionId={PositionId}, Symbol={Symbol}, Side={Side}, ExitReason={ExitReason}, LocalOrderId={LocalOrderId}, ExchangeOrderId={ExchangeOrderId}, RequestedQuantity={RequestedQuantity}",
                     position.Id,
                     position.Symbol,
                     closeSide,
                     reason,
                     closeResult.Order?.Id,
                     closeResult.Order?.ExchangeOrderId,
-                    exitPrice,
-                    executedQuantity,
-                    pnl);
-
-                // TODO: Persist additional close artifacts when Position model is extended:
-                // ExitOrderId, ExchangeOrderId, ExitExecutedQuantity, ExitFee.
+                    quantity);
+                HighestPriceSinceEntry.TryRemove(position.Id, out _);
+                LowestPriceSinceEntry.TryRemove(position.Id, out _);
             }
             catch
             {
-                position.IsClosing = false;
-                await positionRepository.UpsertAsync(position, cancellationToken);
+                await positionRepository.ClearPositionClosingAsync(position.Id, cancellationToken);
                 throw;
             }
         }
@@ -428,34 +422,6 @@ public class TradeMonitorWorker(
             position.StopLossPrice);
     }
 
-    private decimal ResolveExitPrice(PlaceSpotOrderResult closeResult, decimal fallbackPrice, Position position)
-    {
-        var orderPrice = closeResult.Order?.Price ?? 0m;
-        if (orderPrice > 0m)
-            return orderPrice;
-
-        logger.LogWarning(
-            "TradeMonitorWorker used cached price as exit fill fallback. PositionId={PositionId}, Symbol={Symbol}, CachedPrice={CachedPrice}",
-            position.Id,
-            position.Symbol,
-            fallbackPrice);
-        return fallbackPrice;
-    }
-
-    private decimal ResolveExecutedQuantity(PlaceSpotOrderResult closeResult, decimal fallbackQuantity, Position position)
-    {
-        var executedQuantity = closeResult.Order?.Quantity ?? 0m;
-        if (executedQuantity > 0m)
-            return executedQuantity;
-
-        logger.LogWarning(
-            "TradeMonitorWorker used requested quantity as executed fallback. PositionId={PositionId}, Symbol={Symbol}, Quantity={Quantity}",
-            position.Id,
-            position.Symbol,
-            fallbackQuantity);
-        return fallbackQuantity;
-    }
-
     private static string CreateCloseIdempotencyKey(Position position, OrderSide closeSide, decimal quantity, PositionExitReason reason)
     {
         var raw = $"{position.Id}|{position.Symbol}|{closeSide}|{BinanceDecimalFormatter.FormatQuantity(quantity)}|{reason}";
@@ -475,27 +441,12 @@ public class TradeMonitorWorker(
         };
     }
 
-    private static decimal CalculateRealizedPnlWithFees(Position position, decimal exitPrice, decimal quantity, decimal feeRate)
-    {
-        var rawPnl = position.Side == OrderSide.BUY
-            ? (exitPrice - position.AveragePrice) * quantity
-            : (position.AveragePrice - exitPrice) * quantity;
-
-        var entryNotional = position.AveragePrice * quantity;
-        var exitNotional = exitPrice * quantity;
-        var fee = (entryNotional + exitNotional) * feeRate;
-
-        return rawPnl - fee;
-    }
-
     private TradeMonitoringSettings ReadSettings()
     {
         var intervalSeconds = Math.Max(1, configuration.GetValue<int?>("TradeMonitoring:IntervalSeconds") ?? DefaultIntervalSeconds);
         var maxTradeDurationMinutes = Math.Max(1, configuration.GetValue<int?>("TradeMonitoring:MaxTradeDurationMinutes") ?? DefaultMaxTradeDurationMinutes);
         var closeOrderMaxRetries = Math.Max(1, configuration.GetValue<int?>("TradeMonitoring:CloseOrderMaxRetries") ?? DefaultCloseOrderMaxRetries);
         var closeOrderRetryDelayMs = Math.Max(100, configuration.GetValue<int?>("TradeMonitoring:CloseOrderRetryDelayMs") ?? DefaultCloseOrderRetryDelayMs);
-        var feeRateRaw = configuration.GetValue<decimal?>("TradeMonitoring:FeeRate") ?? DefaultFeeRate;
-        var feeRate = Math.Clamp(feeRateRaw, 0m, 0.05m);
         var enableTimeExit = configuration.GetValue<bool?>("TradeMonitoring:EnableTimeExit") ?? DefaultEnableTimeExit;
         var enableStopLossExit = configuration.GetValue<bool?>("TradeMonitoring:EnableStopLossExit") ?? DefaultEnableStopLossExit;
         var enableTakeProfitExit = configuration.GetValue<bool?>("TradeMonitoring:EnableTakeProfitExit") ?? DefaultEnableTakeProfitExit;
@@ -513,7 +464,6 @@ public class TradeMonitorWorker(
             MaxTradeDurationMinutes = maxTradeDurationMinutes,
             CloseOrderMaxRetries = closeOrderMaxRetries,
             CloseOrderRetryDelayMs = closeOrderRetryDelayMs,
-            FeeRate = feeRate,
             EnableTimeExit = enableTimeExit,
             EnableStopLossExit = enableStopLossExit,
             EnableTakeProfitExit = enableTakeProfitExit,
@@ -532,7 +482,6 @@ public class TradeMonitorWorker(
         public int CloseOrderMaxRetries { get; init; }
         public int CloseOrderRetryDelayMs { get; init; }
         public int CloseIdempotencyWindowSeconds { get; init; }
-        public decimal FeeRate { get; init; }
         public bool EnableTimeExit { get; init; }
         public bool EnableStopLossExit { get; init; }
         public bool EnableTakeProfitExit { get; init; }

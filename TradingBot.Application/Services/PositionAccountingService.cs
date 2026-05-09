@@ -1,11 +1,16 @@
 using TradingBot.Domain.Enums.Binance;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.Trading;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace TradingBot.Application.Services;
 
-public class PositionAccountingService : IPositionAccountingService
+public class PositionAccountingService(ILogger<PositionAccountingService>? logger = null) : IPositionAccountingService
 {
+    private const decimal QuantityTolerance = 0.00000001m;
+    private readonly ILogger<PositionAccountingService> _logger = logger ?? NullLogger<PositionAccountingService>.Instance;
+
     public PositionAccountingResult ApplyTrades(
         Position? currentPosition,
         Order order,
@@ -41,6 +46,8 @@ public class PositionAccountingService : IPositionAccountingService
         var closed = false;
         var flipped = false;
         decimal? lastClosingPrice = null;
+        DateTime? lastClosingExecutedAt = null;
+        DateTime? openingExecutedAt = null;
         var skipped = 0;
         var skippedWithoutOpen = 0;
 
@@ -70,36 +77,45 @@ public class PositionAccountingService : IPositionAccountingService
                 trade.Price,
                 ref realizedDelta,
                 ref flipped,
-                ref lastClosingPrice);
+                ref lastClosingPrice,
+                ref lastClosingExecutedAt,
+                trade.ExecutedAt);
             processed++;
-            feeDelta += ResolveQuoteFee(trade, order.Symbol.ToString());
+            feeDelta += ResolveFeeInQuoteAsset(trade, order.Symbol.ToString());
 
             if (previousQuantity == 0m && quantity != 0m)
+            {
                 opened = true;
-            if (previousQuantity != 0m && quantity == 0m)
+                openingExecutedAt ??= trade.ExecutedAt;
+            }
+            if (previousQuantity != 0m && Math.Abs(quantity) <= QuantityTolerance)
                 closed = true;
         }
 
-        // TODO: If fee is reported in non-quote asset, convert to quote asset before applying.
         realizedDelta -= feeDelta;
+        quantity = NormalizeQuantity(quantity);
 
         position.Quantity = quantity;
         position.AveragePrice = quantity == 0m ? position.AveragePrice : averagePrice;
         position.RealizedPnl += realizedDelta;
         position.Side = DeriveSide(quantity, position.Side, order.Side);
         position.IsOpen = quantity != 0m;
+        position.IsClosing = false;
 
         if (position.IsOpen)
         {
-            if (position.OpenedAt is null)
+            if (position.OpenedAt is null && openingExecutedAt.HasValue)
+                position.OpenedAt = openingExecutedAt.Value;
+            else if (position.OpenedAt is null)
                 position.OpenedAt = DateTime.UtcNow;
             position.ClosedAt = null;
             position.ExitPrice = null;
         }
         else
         {
-            position.ClosedAt = DateTime.UtcNow;
+            position.ClosedAt = lastClosingExecutedAt ?? position.ClosedAt ?? DateTime.UtcNow;
             position.ExitPrice = lastClosingPrice ?? position.ExitPrice;
+            position.Quantity = 0m;
         }
 
         var reason = processed == 0
@@ -121,22 +137,55 @@ public class PositionAccountingService : IPositionAccountingService
         };
     }
 
-    private static decimal ResolveQuoteFee(TradeExecution trade, string symbolText)
+    private decimal ResolveFeeInQuoteAsset(TradeExecution trade, string symbolText)
     {
         if (trade.Fee <= 0m)
             return 0m;
 
         var feeAsset = trade.FeeAsset?.Trim();
         if (string.IsNullOrWhiteSpace(feeAsset))
-            return trade.Fee;
-
-        var quoteAsset = symbolText.EndsWith("USDT", StringComparison.OrdinalIgnoreCase) ? "USDT" : string.Empty;
-        if (string.IsNullOrEmpty(quoteAsset))
+        {
+            _logger.LogWarning(
+                "PositionAccountingService ignored fee because fee asset is missing. TradeExecutionId={TradeExecutionId}, Symbol={Symbol}, Side={Side}, Fee={Fee}",
+                trade.Id,
+                trade.Symbol,
+                trade.Side,
+                trade.Fee);
             return 0m;
+        }
+
+        if (!TryResolveSymbolAssets(symbolText, out var baseAsset, out var quoteAsset))
+        {
+            _logger.LogWarning(
+                "PositionAccountingService ignored fee because symbol assets could not be resolved. TradeExecutionId={TradeExecutionId}, Symbol={Symbol}, FeeAsset={FeeAsset}, Fee={Fee}",
+                trade.Id,
+                trade.Symbol,
+                feeAsset,
+                trade.Fee);
+            return 0m;
+        }
 
         if (feeAsset.Equals(quoteAsset, StringComparison.OrdinalIgnoreCase))
             return trade.Fee;
 
+        if (feeAsset.Equals(baseAsset, StringComparison.OrdinalIgnoreCase) && trade.Side == OrderSide.BUY)
+        {
+            _logger.LogDebug(
+                "PositionAccountingService ignored base-asset BUY fee because quote conversion is unavailable. TradeExecutionId={TradeExecutionId}, Symbol={Symbol}, FeeAsset={FeeAsset}, Fee={Fee}",
+                trade.Id,
+                trade.Symbol,
+                feeAsset,
+                trade.Fee);
+            return 0m;
+        }
+
+        _logger.LogWarning(
+            "PositionAccountingService ignored unsupported fee asset. TradeExecutionId={TradeExecutionId}, Symbol={Symbol}, Side={Side}, FeeAsset={FeeAsset}, Fee={Fee}",
+            trade.Id,
+            trade.Symbol,
+            trade.Side,
+            feeAsset,
+            trade.Fee);
         return 0m;
     }
 
@@ -147,7 +196,9 @@ public class PositionAccountingService : IPositionAccountingService
         decimal tradePrice,
         ref decimal realizedDelta,
         ref bool flipped,
-        ref decimal? lastClosingPrice)
+        ref decimal? lastClosingPrice,
+        ref DateTime? lastClosingExecutedAt,
+        DateTime executedAt)
     {
         if (quantity == 0m || Math.Sign(quantity) == Math.Sign(signedTradeQuantity))
         {
@@ -177,11 +228,13 @@ public class PositionAccountingService : IPositionAccountingService
             realizedDelta += (averagePrice - tradePrice) * closingQuantity;
 
         lastClosingPrice = tradePrice;
+        lastClosingExecutedAt = executedAt;
 
         var remainingTradeQuantity = Math.Abs(signedTradeQuantity) - closingQuantity;
         if (remainingTradeQuantity <= 0m)
         {
             quantity += signedTradeQuantity;
+            quantity = NormalizeQuantity(quantity);
             return;
         }
 
@@ -241,5 +294,28 @@ public class PositionAccountingService : IPositionAccountingService
         return existingSide == OrderSide.BUY || existingSide == OrderSide.SELL
             ? existingSide
             : fallbackSide;
+    }
+
+    private static decimal NormalizeQuantity(decimal quantity)
+    {
+        return Math.Abs(quantity) <= QuantityTolerance ? 0m : quantity;
+    }
+
+    private static bool TryResolveSymbolAssets(string symbolText, out string baseAsset, out string quoteAsset)
+    {
+        var knownQuotes = new[] { "USDT", "USDC", "BUSD", "FDUSD", "BTC", "ETH", "BNB" };
+        foreach (var quote in knownQuotes.OrderByDescending(q => q.Length))
+        {
+            if (!symbolText.EndsWith(quote, StringComparison.OrdinalIgnoreCase) || symbolText.Length <= quote.Length)
+                continue;
+
+            baseAsset = symbolText[..^quote.Length];
+            quoteAsset = quote;
+            return true;
+        }
+
+        baseAsset = string.Empty;
+        quoteAsset = string.Empty;
+        return false;
     }
 }

@@ -2,10 +2,13 @@ using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.Analytics;
 using TradingBot.Domain.Models.Trading;
+using Microsoft.Extensions.Logging;
 
 namespace TradingBot.Application.Services;
 
-public class TradeAnalyticsService(IPositionRepository positionRepository) : ITradeAnalyticsService
+public class TradeAnalyticsService(
+    IPositionRepository positionRepository,
+    ILogger<TradeAnalyticsService> logger) : ITradeAnalyticsService
 {
 
     public async Task<TradeAnalyticsSummary> GetSummary(CancellationToken cancellationToken = default)
@@ -85,11 +88,23 @@ public class TradeAnalyticsService(IPositionRepository positionRepository) : ITr
     {
         var closed = await positionRepository.GetClosedPositionsAsync(cancellationToken);
 
-        return closed
-            .Where(x => x.ExitPrice.HasValue && x.ExitReason.HasValue)
+        var included = closed
+            .Where(x => !x.IsOpen && x.ClosedAt.HasValue && x.ExitPrice.HasValue)
             .OrderBy(x => x.ClosedAt ?? x.UpdatedAt)
             .ThenBy(x => x.Id)
             .ToList();
+
+        foreach (var position in included.Where(x => !x.ExitReason.HasValue))
+        {
+            logger.LogWarning(
+                "Trade analytics included closed position with null exit reason. PositionId={PositionId}, Symbol={Symbol}, ClosedAt={ClosedAt}, ExitPrice={ExitPrice}",
+                position.Id,
+                position.Symbol,
+                position.ClosedAt,
+                position.ExitPrice);
+        }
+
+        return included;
     }
 
 }

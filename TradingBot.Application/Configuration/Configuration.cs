@@ -18,17 +18,17 @@ public static class Configuration
         services.AddScoped<TradingApi>();
         services.AddScoped<GeneralApi>();
         //Background Services
-        services.AddHostedService<OrderSyncWorker>();
-        services.AddHostedService<TradeSyncWorker>();
-        services.AddHostedService<PositionWorker>();
-        services.AddHostedService<BalanceSyncWorker>();
-        services.AddHostedService<TimeSyncWorker>();
-        services.AddHostedService<MarketDataWorker>();
-        services.AddHostedService<PositionReconciliationWorker>();
-        services.AddHostedService<DecisionWorker>();
+        //services.AddHostedService<OrderSyncWorker>();
+        //services.AddHostedService<TradeSyncWorker>();
+        //services.AddHostedService<PositionWorker>();
+        //services.AddHostedService<BalanceSyncWorker>();
+        //services.AddHostedService<TimeSyncWorker>();
+        //services.AddHostedService<MarketDataWorker>();
+        //services.AddHostedService<PositionReconciliationWorker>();
+        //services.AddHostedService<DecisionWorker>();
 
-        services.AddHostedService<TradeMonitorWorker>();
-        services.AddHostedService<AnalyticsWorker>();
+        //services.AddHostedService<TradeMonitorWorker>();
+        //services.AddHostedService<AnalyticsWorker>();
 
         services.AddScoped<IDecisionService, DecisionService>();
         services.AddScoped<IMovingAverageStrategy, MovingAverageTrendStrategy>();
@@ -54,6 +54,7 @@ public static class Configuration
         services.AddScoped<ITradeAnalyticsService, TradeAnalyticsService>();
         services.AddScoped<IPositionAccountingService, PositionAccountingService>();
         services.AddScoped<IPositionReconciliationService, PositionReconciliationService>();
+        services.AddScoped<ITradingHealthDiagnosticsService, TradingHealthDiagnosticsService>();
 
         services.AddMediatR(config =>
         {

@@ -19,9 +19,9 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
         {
             const string insertSql = """
                 INSERT INTO positions
-                    (symbol, side, quantity, average_price, stop_loss_price, take_profit_price, exit_price, exit_reason, opened_at, closed_at, realized_pnl, unrealized_pnl, is_open, created_at, updated_at)
+                    (symbol, side, quantity, average_price, stop_loss_price, take_profit_price, exit_price, exit_reason, opened_at, closed_at, realized_pnl, unrealized_pnl, is_open, is_closing, created_at, updated_at)
                 VALUES
-                    (@Symbol, @Side, @Quantity, @AveragePrice, @StopLossPrice, @TakeProfitPrice, @ExitPrice, @ExitReason, @OpenedAt, @ClosedAt, @RealizedPnl, @UnrealizedPnl, @IsOpen, @CreatedAt, @UpdatedAt)
+                    (@Symbol, @Side, @Quantity, @AveragePrice, @StopLossPrice, @TakeProfitPrice, @ExitPrice, @ExitReason, @OpenedAt, @ClosedAt, @RealizedPnl, @UnrealizedPnl, @IsOpen, @IsClosing, @CreatedAt, @UpdatedAt)
                 RETURNING id;
                 """;
 
@@ -40,6 +40,7 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
                 position.RealizedPnl,
                 position.UnrealizedPnl,
                 position.IsOpen,
+                position.IsClosing,
                 position.CreatedAt,
                 position.UpdatedAt
             };
@@ -66,6 +67,7 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
                     realized_pnl = @RealizedPnl,
                     unrealized_pnl = @UnrealizedPnl,
                     is_open = @IsOpen,
+                    is_closing = @IsClosing,
                     updated_at = @UpdatedAt
                 WHERE id = @Id;
                 """;
@@ -86,6 +88,7 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
                 position.RealizedPnl,
                 position.UnrealizedPnl,
                 position.IsOpen,
+                position.IsClosing,
                 position.UpdatedAt
             };
             await connection.ExecuteAsync(new CommandDefinition(updateSql, updateParam, cancellationToken: cancellationToken));
@@ -99,7 +102,7 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
             SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
                    take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
                    closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
-                   is_open AS IsOpen, created_at AS CreatedAt, updated_at AS UpdatedAt
+                   is_open AS IsOpen, is_closing AS IsClosing, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM positions
             WHERE id = @Id;
             """;
@@ -114,7 +117,7 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
             SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
                    take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
                    closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
-                   is_open AS IsOpen, created_at AS CreatedAt, updated_at AS UpdatedAt
+                   is_open AS IsOpen, is_closing AS IsClosing, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM positions
             WHERE symbol = @Symbol AND is_open = TRUE
             LIMIT 1;
@@ -130,7 +133,7 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
             SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
                    take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
                    closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
-                   is_open AS IsOpen, created_at AS CreatedAt, updated_at AS UpdatedAt
+                   is_open AS IsOpen, is_closing AS IsClosing, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM positions
             WHERE is_open = TRUE
             ORDER BY symbol;
@@ -158,6 +161,7 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
             realized_pnl AS RealizedPnl, 
             unrealized_pnl AS UnrealizedPnl,
             is_open AS IsOpen,
+            is_closing AS IsClosing,
             created_at AS CreatedAt, 
             updated_at AS UpdatedAt
             FROM positions
@@ -168,6 +172,52 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
         var result = await connection.QueryAsync<Position>(
             new CommandDefinition(sql, cancellationToken: cancellationToken));
         return result.ToList();
+    }
+
+    public async Task<bool> TryMarkPositionClosingAsync(long positionId, CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            UPDATE positions
+            SET is_closing = TRUE,
+                updated_at = @UpdatedAt
+            WHERE id = @PositionId
+              AND is_open = TRUE
+              AND is_closing = FALSE
+              AND quantity > 0
+            RETURNING id;
+            """;
+
+        var updatedId = await connection.QuerySingleOrDefaultAsync<long?>(
+            new CommandDefinition(
+                sql,
+                new
+                {
+                    PositionId = positionId,
+                    UpdatedAt = DateTime.UtcNow
+                },
+                cancellationToken: cancellationToken));
+
+        return updatedId.HasValue;
+    }
+
+    public async Task ClearPositionClosingAsync(long positionId, CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            UPDATE positions
+            SET is_closing = FALSE,
+                updated_at = @UpdatedAt
+            WHERE id = @PositionId;
+            """;
+
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                sql,
+                new
+                {
+                    PositionId = positionId,
+                    UpdatedAt = DateTime.UtcNow
+                },
+                cancellationToken: cancellationToken));
     }
 }
 

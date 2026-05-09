@@ -166,7 +166,7 @@ public class PositionWorker(
                     continue;
                 }
 
-                if (trades.All(t => t.PositionProcessedAt is not null))
+                if (AreAllExecutionsProcessed(trades))
                 {
                     await orderStatusService.TryUpdateProcessingStatusAsync(
                         order.Id,
@@ -174,14 +174,29 @@ public class PositionWorker(
                         ProcessingStatus.PositionUpdated,
                         cancellationToken);
                     logger.LogInformation(
-                        "PositionWorker skipped already-processed trades. OrderId={OrderId}, Symbol={Symbol}, TradeCount={TradeCount}",
+                        "PositionWorker completed order with already-processed trades. OrderId={OrderId}, Symbol={Symbol}, TradeCount={TradeCount}",
                         order.Id,
                         order.Symbol,
                         trades.Count);
                     continue;
                 }
 
-                var currentPosition = await positionRepository.GetOpenPositionAsync(order.Symbol, cancellationToken);
+                var currentPosition = await ResolvePositionForOrderAsync(order, positionRepository, cancellationToken);
+                if (order.ParentPositionId.HasValue && order.ParentPositionId.Value > 0 && currentPosition is null)
+                {
+                    logger.LogError(
+                        "PositionWorker moved order to PositionUpdateFailed because parent position was not found. OrderId={OrderId}, Symbol={Symbol}, Side={Side}, ParentPositionId={ParentPositionId}, TradeCount={TradeCount}",
+                        order.Id,
+                        order.Symbol,
+                        order.Side,
+                        order.ParentPositionId,
+                        trades.Count);
+                    await orderStatusService.TrySetPositionUpdateFailedAsync(
+                        order.Id,
+                        ProcessingStatus.PositionUpdating,
+                        cancellationToken);
+                    continue;
+                }
                 var oldQuantity = currentPosition?.Quantity ?? 0m;
                 var oldAveragePrice = currentPosition?.AveragePrice ?? 0m;
                 var oldRealizedPnl = currentPosition?.RealizedPnl ?? 0m;
@@ -189,25 +204,100 @@ public class PositionWorker(
                 var accounting = accountingService.ApplyTrades(currentPosition, order, trades);
                 if (accounting.ProcessedTradeCount == 0)
                 {
-                    await orderStatusService.TryUpdateProcessingStatusAsync(
-                        order.Id,
-                        ProcessingStatus.PositionUpdating,
-                        ProcessingStatus.PositionUpdated,
-                        cancellationToken);
-                    logger.LogWarning(
-                        "PositionWorker applied no-op accounting and completed order safely. OrderId={OrderId}, Symbol={Symbol}, Reason={Reason}",
+                    var parentPosition = await ResolveParentPositionAsync(order, positionRepository, cancellationToken);
+                    var expectedAlreadyAccounted = IsExpectedAlreadyAccountedClosePath(order, parentPosition);
+                    if (expectedAlreadyAccounted)
+                    {
+                        if (parentPosition is not null && parentPosition.IsClosing)
+                        {
+                            parentPosition.IsClosing = false;
+                            await positionRepository.UpsertAsync(parentPosition, cancellationToken);
+                        }
+
+                        await tradeExecutionRepository.MarkPositionProcessedByOrderAsync(order.Id, DateTime.UtcNow, cancellationToken);
+                        var refreshedTrades = await tradeExecutionRepository.GetByOrderIdAsync(order.Id, cancellationToken);
+                        if (!AreAllExecutionsProcessed(refreshedTrades))
+                        {
+                            logger.LogError(
+                                "PositionWorker could not complete order because trade executions remain unprocessed after marking attempt. OrderId={OrderId}, Symbol={Symbol}, Side={Side}, ExecutionCount={ExecutionCount}, ParentPositionId={ParentPositionId}, Reason={Reason}",
+                                order.Id,
+                                order.Symbol,
+                                order.Side,
+                                refreshedTrades.Count,
+                                order.ParentPositionId,
+                                "Expected already-accounted close path, but position_processed_at still contains null values.");
+                            await orderStatusService.TrySetPositionUpdateFailedAsync(
+                                order.Id,
+                                ProcessingStatus.PositionUpdating,
+                                cancellationToken);
+                            continue;
+                        }
+
+                        await orderStatusService.TryUpdateProcessingStatusAsync(
+                            order.Id,
+                            ProcessingStatus.PositionUpdating,
+                            ProcessingStatus.PositionUpdated,
+                            cancellationToken);
+                        logger.LogWarning(
+                            "PositionWorker marked executions as processed for already-closed parent position and completed order. OrderId={OrderId}, Symbol={Symbol}, Side={Side}, ExecutionCount={ExecutionCount}, ParentPositionId={ParentPositionId}, OrderSource={OrderSource}, CloseReason={CloseReason}, AccountingReason={AccountingReason}",
+                            order.Id,
+                            order.Symbol,
+                            order.Side,
+                            refreshedTrades.Count,
+                            order.ParentPositionId,
+                            order.OrderSource,
+                            order.CloseReason,
+                            accounting.Reason);
+                        continue;
+                    }
+
+                    logger.LogError(
+                        "PositionWorker moved order to PositionUpdateFailed because executions were not applied and path is not recognized as already-accounted close. OrderId={OrderId}, Symbol={Symbol}, Side={Side}, ExecutionCount={ExecutionCount}, ParentPositionId={ParentPositionId}, Reason={Reason}",
                         order.Id,
                         order.Symbol,
+                        order.Side,
+                        trades.Count,
+                        order.ParentPositionId,
                         accounting.Reason);
+                    await orderStatusService.TrySetPositionUpdateFailedAsync(
+                        order.Id,
+                        ProcessingStatus.PositionUpdating,
+                        cancellationToken);
                     continue;
                 }
 
                 // TODO: Position upsert + trade processed marking + order status transition should be atomic per order.
                 if (!accounting.Position.IsOpen && order.CloseReason != CloseReason.None)
                     accounting.Position.ExitReason = MapExitReason(order.CloseReason);
+                accounting.Position.IsClosing = false;
+
+                if (!ValidatePositionInvariants(order, accounting.Position))
+                {
+                    await orderStatusService.TrySetPositionUpdateFailedAsync(
+                        order.Id,
+                        ProcessingStatus.PositionUpdating,
+                        cancellationToken);
+                    continue;
+                }
 
                 await positionRepository.UpsertAsync(accounting.Position, cancellationToken);
                 await tradeExecutionRepository.MarkPositionProcessedByOrderAsync(order.Id, DateTime.UtcNow, cancellationToken);
+                var processedTrades = await tradeExecutionRepository.GetByOrderIdAsync(order.Id, cancellationToken);
+                if (!AreAllExecutionsProcessed(processedTrades))
+                {
+                    logger.LogError(
+                        "PositionWorker failed consistency check: order has unprocessed executions after successful accounting branch. OrderId={OrderId}, Symbol={Symbol}, Side={Side}, ExecutionCount={ExecutionCount}, ParentPositionId={ParentPositionId}",
+                        order.Id,
+                        order.Symbol,
+                        order.Side,
+                        processedTrades.Count,
+                        order.ParentPositionId);
+                    await orderStatusService.TrySetPositionUpdateFailedAsync(
+                        order.Id,
+                        ProcessingStatus.PositionUpdating,
+                        cancellationToken);
+                    continue;
+                }
                 await orderStatusService.TryUpdateProcessingStatusAsync(
                     order.Id,
                     ProcessingStatus.PositionUpdating,
@@ -265,6 +355,13 @@ public class PositionWorker(
                         accounting.RealizedPnlDelta,
                         oldRealizedPnl,
                         accounting.Position.RealizedPnl);
+
+                logger.LogInformation(
+                    "PositionWorker completed order with all executions marked processed. OrderId={OrderId}, Symbol={Symbol}, Side={Side}, ExecutionCount={ExecutionCount}",
+                    order.Id,
+                    order.Symbol,
+                    order.Side,
+                    processedTrades.Count);
             }
             catch (Exception ex)
             {
@@ -315,8 +412,109 @@ public class PositionWorker(
             CloseReason.StopLoss => PositionExitReason.StopLoss,
             CloseReason.TakeProfit => PositionExitReason.TakeProfit,
             CloseReason.MaxDuration => PositionExitReason.Time,
-            CloseReason.RiskExit => PositionExitReason.TrailingStop,
+            CloseReason.ManualClose => PositionExitReason.ManualClose,
+            CloseReason.Reconciliation => PositionExitReason.Reconciliation,
+            CloseReason.OppositeSignal => PositionExitReason.OppositeSignal,
+            CloseReason.RiskExit => PositionExitReason.RiskExit,
+            CloseReason.Unknown => PositionExitReason.Unknown,
+            CloseReason.None => null,
             _ => null
         };
+    }
+
+    private static bool AreAllExecutionsProcessed(IReadOnlyList<TradeExecution> trades)
+    {
+        return trades.Count > 0 && trades.All(t => t.PositionProcessedAt is not null);
+    }
+
+    private static async Task<Position?> ResolveParentPositionAsync(
+        Order order,
+        IPositionRepository positionRepository,
+        CancellationToken cancellationToken)
+    {
+        if (!order.ParentPositionId.HasValue || order.ParentPositionId.Value <= 0)
+            return null;
+
+        return await positionRepository.GetByIdAsync(order.ParentPositionId.Value, cancellationToken);
+    }
+
+    private static async Task<Position?> ResolvePositionForOrderAsync(
+        Order order,
+        IPositionRepository positionRepository,
+        CancellationToken cancellationToken)
+    {
+        if (order.ParentPositionId.HasValue && order.ParentPositionId.Value > 0)
+            return await positionRepository.GetByIdAsync(order.ParentPositionId.Value, cancellationToken);
+
+        return await positionRepository.GetOpenPositionAsync(order.Symbol, cancellationToken);
+    }
+
+    private bool ValidatePositionInvariants(Order order, Position position)
+    {
+        if (!position.IsOpen)
+        {
+            if (position.Quantity != 0m)
+            {
+                logger.LogError(
+                    "PositionWorker invariant failed: closed position has non-zero quantity. OrderId={OrderId}, PositionId={PositionId}, Quantity={Quantity}",
+                    order.Id,
+                    position.Id,
+                    position.Quantity);
+                return false;
+            }
+
+            if (!position.ClosedAt.HasValue)
+            {
+                logger.LogError(
+                    "PositionWorker invariant failed: closed position is missing closed_at. OrderId={OrderId}, PositionId={PositionId}",
+                    order.Id,
+                    position.Id);
+                return false;
+            }
+
+            if (!position.ExitPrice.HasValue)
+            {
+                logger.LogError(
+                    "PositionWorker invariant failed: closed position is missing exit_price. OrderId={OrderId}, PositionId={PositionId}",
+                    order.Id,
+                    position.Id);
+                return false;
+            }
+        }
+
+        if (position.IsClosing)
+        {
+            logger.LogError(
+                "PositionWorker invariant failed: position remained in closing state after accounting. OrderId={OrderId}, PositionId={PositionId}",
+                order.Id,
+                position.Id);
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsExpectedAlreadyAccountedClosePath(Order order, Position? parentPosition)
+    {
+        if (order.Side != TradingBot.Domain.Enums.Binance.OrderSide.SELL)
+            return false;
+
+        if (parentPosition is null || parentPosition.IsOpen)
+            return false;
+
+        var sourceMatches = order.OrderSource is OrderSource.TradeMonitorWorker
+            or OrderSource.Manual
+            or OrderSource.Api
+            or OrderSource.PositionReconciliationWorker;
+
+        var closeReasonMatches = order.CloseReason is CloseReason.StopLoss
+            or CloseReason.TakeProfit
+            or CloseReason.MaxDuration
+            or CloseReason.ManualClose
+            or CloseReason.Reconciliation
+            or CloseReason.RiskExit
+            or CloseReason.Unknown;
+
+        return sourceMatches || closeReasonMatches;
     }
 }
