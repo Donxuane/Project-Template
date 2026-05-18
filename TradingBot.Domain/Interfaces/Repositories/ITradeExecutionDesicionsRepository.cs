@@ -6,4 +6,8 @@ public interface ITradeExecutionDesicionsRepository
 {
     public Task<long> AddDesicionAsync(TradeExecutionDecisions desicion);
     public Task UpdateDesicionAsync(TradeExecutionDecisions desicion);
+    public Task<TradeExecutionDecisions?> GetLatestByLocalOrderOrCorrelationAsync(
+        long localOrderId,
+        string? correlationId,
+        CancellationToken cancellationToken = default);
 }

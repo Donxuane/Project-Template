@@ -10,6 +10,7 @@ using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
+using TradingBot.Domain.Models.MarketData;
 using TradingBot.Domain.Models.Trading;
 using Xunit;
 
@@ -98,6 +99,45 @@ public class TradeMonitorWorkerLifecycleTests
         Assert.Equal(0, positionRepository.TryMarkCalls);
         Assert.Equal(0, positionRepository.ClearClosingCalls);
         Assert.Empty(positionRepository.UpsertedSnapshots);
+    }
+
+    [Fact]
+    public async Task TakeProfitTrigger_PlacesCloseOrder_WithTakeProfitReason()
+    {
+        var position = new Position
+        {
+            Id = 155,
+            Symbol = TradingSymbol.BNBUSDT,
+            Side = OrderSide.BUY,
+            Quantity = 0.01m,
+            AveragePrice = 617.24m,
+            TakeProfitPrice = 618.00m,
+            IsOpen = true,
+            IsClosing = false,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-2),
+            OpenedAt = DateTime.UtcNow.AddMinutes(-2)
+        };
+
+        var positionRepository = new FakePositionRepository([position]);
+        var mediator = new CapturingMediator(success: true);
+        var worker = BuildWorker(
+            positionRepository,
+            new FakeOrderRepository(activeCloseOrder: false),
+            new FixedPriceCacheService(618.05m),
+            mediator,
+            new AllowIdempotencyService(),
+            new AllowPositionExecutionGuard());
+
+        await InvokeMonitorOpenPositionsAsync(worker, (settings, settingsType) =>
+        {
+            settingsType.GetProperty("EnableStopLossExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTakeProfitExit")!.SetValue(settings, true);
+            settingsType.GetProperty("EnableTimeExit")!.SetValue(settings, false);
+        });
+
+        Assert.Equal(1, mediator.PlaceOrderCalls);
+        Assert.NotNull(mediator.LastCommand);
+        Assert.Equal(CloseReason.TakeProfit, mediator.LastCommand!.CloseReason);
     }
 
     [Fact]
@@ -196,6 +236,140 @@ public class TradeMonitorWorkerLifecycleTests
         Assert.Equal(0, positionRepository.ClearClosingCalls);
     }
 
+    [Fact]
+    public async Task DynamicTimeExit_EarlyLoss_ClosesWithRiskExit()
+    {
+        var position = new Position
+        {
+            Id = 1201,
+            Symbol = TradingSymbol.BNBUSDT,
+            Side = OrderSide.BUY,
+            Quantity = 0.01m,
+            AveragePrice = 600m,
+            IsOpen = true,
+            IsClosing = false,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-20),
+            OpenedAt = DateTime.UtcNow.AddMinutes(-20)
+        };
+
+        var positionRepository = new FakePositionRepository([position]);
+        var mediator = new CapturingMediator(success: true);
+        var worker = BuildWorker(
+            positionRepository,
+            new FakeOrderRepository(activeCloseOrder: false),
+            new FixedPriceCacheService(599.0m),
+            mediator,
+            new AllowIdempotencyService(),
+            new AllowPositionExecutionGuard());
+
+        await InvokeMonitorOpenPositionsAsync(worker, (settings, settingsType) =>
+        {
+            settingsType.GetProperty("EnableStopLossExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTakeProfitExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTrailingStop")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTimeExit")!.SetValue(settings, true);
+            settingsType.GetProperty("EnableDynamicTimeExit")!.SetValue(settings, true);
+            settingsType.GetProperty("FirstReviewMinutes")!.SetValue(settings, 10);
+            settingsType.GetProperty("CloseEarlyIfLossAfterMinutes")!.SetValue(settings, 12);
+            settingsType.GetProperty("EarlyExitLossPercent")!.SetValue(settings, 0.10m);
+            settingsType.GetProperty("MaxTradeDurationMinutes")!.SetValue(settings, 30);
+            settingsType.GetProperty("MaxExtendedTradeDurationMinutes")!.SetValue(settings, 60);
+            settingsType.GetProperty("MinUnrealizedProfitPercentToExtend")!.SetValue(settings, 0.15m);
+        });
+
+        Assert.Equal(1, mediator.PlaceOrderCalls);
+        Assert.NotNull(mediator.LastCommand);
+        Assert.Equal(CloseReason.RiskExit, mediator.LastCommand!.CloseReason);
+    }
+
+    [Fact]
+    public async Task DynamicTimeExit_ProfitableTrade_BelowHardCap_IsExtendedWithoutClose()
+    {
+        var position = new Position
+        {
+            Id = 1202,
+            Symbol = TradingSymbol.BNBUSDT,
+            Side = OrderSide.BUY,
+            Quantity = 0.01m,
+            AveragePrice = 600m,
+            IsOpen = true,
+            IsClosing = false,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-35),
+            OpenedAt = DateTime.UtcNow.AddMinutes(-35)
+        };
+
+        var positionRepository = new FakePositionRepository([position]);
+        var mediator = new CapturingMediator(success: true);
+        var worker = BuildWorker(
+            positionRepository,
+            new FakeOrderRepository(activeCloseOrder: false),
+            new FixedPriceCacheService(601.2m),
+            mediator,
+            new AllowIdempotencyService(),
+            new AllowPositionExecutionGuard());
+
+        await InvokeMonitorOpenPositionsAsync(worker, (settings, settingsType) =>
+        {
+            settingsType.GetProperty("EnableStopLossExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTakeProfitExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTrailingStop")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTimeExit")!.SetValue(settings, true);
+            settingsType.GetProperty("EnableDynamicTimeExit")!.SetValue(settings, true);
+            settingsType.GetProperty("FirstReviewMinutes")!.SetValue(settings, 10);
+            settingsType.GetProperty("MaxTradeDurationMinutes")!.SetValue(settings, 30);
+            settingsType.GetProperty("MaxExtendedTradeDurationMinutes")!.SetValue(settings, 60);
+            settingsType.GetProperty("MinUnrealizedProfitPercentToExtend")!.SetValue(settings, 0.15m);
+            settingsType.GetProperty("RequireBullishTrendToExtend")!.SetValue(settings, false);
+        });
+
+        Assert.Equal(0, mediator.PlaceOrderCalls);
+        Assert.Equal(0, positionRepository.TryMarkCalls);
+    }
+
+    [Fact]
+    public async Task DynamicTimeExit_HardCap_ClosesWithTimeReason()
+    {
+        var position = new Position
+        {
+            Id = 1203,
+            Symbol = TradingSymbol.BNBUSDT,
+            Side = OrderSide.BUY,
+            Quantity = 0.01m,
+            AveragePrice = 600m,
+            IsOpen = true,
+            IsClosing = false,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-70),
+            OpenedAt = DateTime.UtcNow.AddMinutes(-70)
+        };
+
+        var positionRepository = new FakePositionRepository([position]);
+        var mediator = new CapturingMediator(success: true);
+        var worker = BuildWorker(
+            positionRepository,
+            new FakeOrderRepository(activeCloseOrder: false),
+            new FixedPriceCacheService(603m),
+            mediator,
+            new AllowIdempotencyService(),
+            new AllowPositionExecutionGuard());
+
+        await InvokeMonitorOpenPositionsAsync(worker, (settings, settingsType) =>
+        {
+            settingsType.GetProperty("EnableStopLossExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTakeProfitExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTrailingStop")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTimeExit")!.SetValue(settings, true);
+            settingsType.GetProperty("EnableDynamicTimeExit")!.SetValue(settings, true);
+            settingsType.GetProperty("FirstReviewMinutes")!.SetValue(settings, 10);
+            settingsType.GetProperty("MaxTradeDurationMinutes")!.SetValue(settings, 30);
+            settingsType.GetProperty("MaxExtendedTradeDurationMinutes")!.SetValue(settings, 60);
+            settingsType.GetProperty("MinUnrealizedProfitPercentToExtend")!.SetValue(settings, 0.15m);
+        });
+
+        Assert.Equal(1, mediator.PlaceOrderCalls);
+        Assert.NotNull(mediator.LastCommand);
+        Assert.Equal(CloseReason.MaxDuration, mediator.LastCommand!.CloseReason);
+    }
+
     [Theory]
     [InlineData(true, false, 0.01, true)]
     [InlineData(true, true, 0.01, false)]
@@ -246,14 +420,25 @@ public class TradeMonitorWorkerLifecycleTests
                 ["TradeMonitoring:EnableTakeProfitExit"] = "false",
                 ["TradeMonitoring:EnableTimeExit"] = "false",
                 ["TradeMonitoring:EnableTrailingStop"] = "false",
-                ["TradeMonitoring:EnableBreakEvenStop"] = "false"
+                ["TradeMonitoring:EnableBreakEvenStop"] = "false",
+                ["TradeMonitoring:EnableDynamicTimeExit"] = "false",
+                ["TradeMonitoring:FirstReviewMinutes"] = "10",
+                ["TradeMonitoring:CloseEarlyIfLossAfterMinutes"] = "12",
+                ["TradeMonitoring:EarlyExitLossPercent"] = "0.10",
+                ["TradeMonitoring:NearFlatProfitPercent"] = "0.05",
+                ["TradeMonitoring:ExtensionMinutes"] = "10",
+                ["TradeMonitoring:MaxExtendedTradeDurationMinutes"] = "60",
+                ["TradeMonitoring:MinUnrealizedProfitPercentToExtend"] = "0.15",
+                ["TradeMonitoring:RequireBullishTrendToExtend"] = "false"
             })
             .Build();
 
         return new TradeMonitorWorker(scopeFactory, configuration, NullLogger<TradeMonitorWorker>.Instance);
     }
 
-    private static async Task InvokeMonitorOpenPositionsAsync(TradeMonitorWorker worker)
+    private static async Task InvokeMonitorOpenPositionsAsync(
+        TradeMonitorWorker worker,
+        Action<object, Type>? configure = null)
     {
         var settingsType = typeof(TradeMonitorWorker).GetNestedType("TradeMonitoringSettings", BindingFlags.NonPublic);
         var method = typeof(TradeMonitorWorker).GetMethod("MonitorOpenPositionsAsync", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -273,6 +458,16 @@ public class TradeMonitorWorkerLifecycleTests
         settingsType.GetProperty("TrailingStopPercent")!.SetValue(settings, 0.5m);
         settingsType.GetProperty("EnableBreakEvenStop")!.SetValue(settings, false);
         settingsType.GetProperty("BreakEvenTriggerPercent")!.SetValue(settings, 0.5m);
+        settingsType.GetProperty("EnableDynamicTimeExit")!.SetValue(settings, false);
+        settingsType.GetProperty("FirstReviewMinutes")!.SetValue(settings, 10);
+        settingsType.GetProperty("CloseEarlyIfLossAfterMinutes")!.SetValue(settings, 12);
+        settingsType.GetProperty("EarlyExitLossPercent")!.SetValue(settings, 0.10m);
+        settingsType.GetProperty("NearFlatProfitPercent")!.SetValue(settings, 0.05m);
+        settingsType.GetProperty("ExtensionMinutes")!.SetValue(settings, 10);
+        settingsType.GetProperty("MaxExtendedTradeDurationMinutes")!.SetValue(settings, 60);
+        settingsType.GetProperty("MinUnrealizedProfitPercentToExtend")!.SetValue(settings, 0.15m);
+        settingsType.GetProperty("RequireBullishTrendToExtend")!.SetValue(settings, false);
+        configure?.Invoke(settings!, settingsType);
 
         var task = (Task)method!.Invoke(worker, new[] { settings!, CancellationToken.None })!;
         await task;
@@ -301,6 +496,14 @@ public class TradeMonitorWorkerLifecycleTests
     {
         public Task<decimal?> GetCachedPriceAsync(TradingSymbol symbol, CancellationToken cancellationToken = default)
             => Task.FromResult<decimal?>(price);
+
+        public Task<PriceSnapshot?> GetCachedPriceSnapshotAsync(TradingSymbol symbol, CancellationToken cancellationToken = default)
+            => Task.FromResult<PriceSnapshot?>(new PriceSnapshot
+            {
+                Price = price,
+                AsOfUtc = DateTime.UtcNow,
+                Source = "RedisTicker"
+            });
 
         public Task SetCachedPriceAsync(TradingSymbol symbol, decimal price, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
@@ -381,6 +584,8 @@ public class TradeMonitorWorkerLifecycleTests
         public Task<IReadOnlyList<Order>> GetOpenOrdersAsync(TradingSymbol? symbol = null, int? limit = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
         public Task<IReadOnlyList<Order>> GetFilledOrdersAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
         public Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusAsync(ProcessingStatus processingStatus, int? limit = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
+        public Task<int> GetInFlightOpeningOrderCountAsync(CancellationToken cancellationToken = default) => Task.FromResult(0);
+        public Task<bool> HasInFlightClosingOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default) => Task.FromResult(activeCloseOrder);
         public Task<bool> HasActiveCloseOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default) => Task.FromResult(activeCloseOrder);
         public Task<IReadOnlyList<Order>> GetOpenOrdersForWorkerAsync(IDbTransaction transaction, TradingSymbol? symbol, int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
         public Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusForWorkerAsync(IDbTransaction transaction, ProcessingStatus processingStatus, int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);

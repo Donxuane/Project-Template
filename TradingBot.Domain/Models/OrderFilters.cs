@@ -60,6 +60,13 @@ public class PercentPriceBySideFilter : Filter
     public int AvgPriceMins { get; set; }
 }
 
+public class PercentPriceFilter : Filter
+{
+    public string MultiplierUp { get; set; }
+    public string MultiplierDown { get; set; }
+    public int AvgPriceMins { get; set; }
+}
+
 public class NotionalFilter : Filter
 {
     public string MinNotional { get; set; }
@@ -87,4 +94,9 @@ public class MaxNumAlgoOrdersFilter : Filter
 public class MaxNumOrderAmendsFilter : Filter
 {
     public int MaxNumOrderAmends { get; set; }
+}
+
+public class UnknownFilter : Filter
+{
+    public string RawJson { get; set; } = string.Empty;
 }

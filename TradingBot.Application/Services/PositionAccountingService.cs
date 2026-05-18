@@ -14,7 +14,9 @@ public class PositionAccountingService(ILogger<PositionAccountingService>? logge
     public PositionAccountingResult ApplyTrades(
         Position? currentPosition,
         Order order,
-        IReadOnlyList<TradeExecution> trades)
+        IReadOnlyList<TradeExecution> trades,
+        decimal? stopLossPrice = null,
+        decimal? takeProfitPrice = null)
     {
         var position = CloneOrCreatePosition(currentPosition, order.Symbol);
         if (trades.Count == 0)
@@ -110,6 +112,16 @@ public class PositionAccountingService(ILogger<PositionAccountingService>? logge
                 position.OpenedAt = DateTime.UtcNow;
             position.ClosedAt = null;
             position.ExitPrice = null;
+
+            // Apply explicit risk targets from the decision/execution pipeline.
+            // Null values never clear existing targets.
+            if (order.Side == OrderSide.BUY)
+            {
+                if (stopLossPrice.HasValue)
+                    position.StopLossPrice = stopLossPrice;
+                if (takeProfitPrice.HasValue)
+                    position.TakeProfitPrice = takeProfitPrice;
+            }
         }
         else
         {

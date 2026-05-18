@@ -35,6 +35,7 @@ public class PositionExecutionGuardTests
         var guard = CreateGuard(
             openPosition: new Position
             {
+                Id = 1,
                 Symbol = TradingSymbol.BNBUSDT,
                 Side = OrderSide.BUY,
                 Quantity = 0.02m,
@@ -80,6 +81,7 @@ public class PositionExecutionGuardTests
         var guard = CreateGuard(
             openPosition: new Position
             {
+                Id = 2,
                 Symbol = TradingSymbol.BNBUSDT,
                 Side = OrderSide.BUY,
                 Quantity = 0.02m,
@@ -100,11 +102,41 @@ public class PositionExecutionGuardTests
     }
 
     [Fact]
+    public async Task SpotSell_WithInFlightCloseOrder_IsBlocked()
+    {
+        var guard = CreateGuard(
+            openPosition: new Position
+            {
+                Id = 64,
+                Symbol = TradingSymbol.BNBUSDT,
+                Side = OrderSide.BUY,
+                Quantity = 0.15m,
+                IsOpen = true
+            },
+            allowAddToPosition: false,
+            hasInFlightCloseOrder: true);
+
+        var result = await guard.EvaluateAsync(new PositionExecutionGuardRequest
+        {
+            Symbol = TradingSymbol.BNBUSDT,
+            TradingMode = TradingMode.Spot,
+            RawSignal = TradeSignal.Sell,
+            ExecutionIntent = TradeExecutionIntent.CloseLong,
+            RequestedSide = OrderSide.SELL,
+            RequestedQuantity = 0.15m
+        });
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal("Execution skipped - close order already in-flight for position.", result.Reason);
+    }
+
+    [Fact]
     public async Task SpotSell_QuantityGreaterThanOpenPosition_IsBlocked()
     {
         var guard = CreateGuard(
             openPosition: new Position
             {
+                Id = 3,
                 Symbol = TradingSymbol.BNBUSDT,
                 Side = OrderSide.BUY,
                 Quantity = 0.01m,
@@ -149,6 +181,7 @@ public class PositionExecutionGuardTests
         var guard = CreateGuard(
             openPosition: new Position
             {
+                Id = 4,
                 Symbol = TradingSymbol.BNBUSDT,
                 Side = OrderSide.BUY,
                 Quantity = 0.05m,
@@ -188,7 +221,7 @@ public class PositionExecutionGuardTests
         Assert.Equal("Spot SELL skipped because no open long position exists.", result.Reason);
     }
 
-    private static PositionExecutionGuard CreateGuard(Position? openPosition, bool allowAddToPosition)
+    private static PositionExecutionGuard CreateGuard(Position? openPosition, bool allowAddToPosition, bool hasInFlightCloseOrder = false)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -201,7 +234,24 @@ public class PositionExecutionGuardTests
         return new PositionExecutionGuard(
             configuration,
             new FakePositionRepository(openPosition),
+            new FakeOrderRepository(hasInFlightCloseOrder),
             NullLogger<PositionExecutionGuard>.Instance);
+    }
+
+    private sealed class FakeOrderRepository(bool hasInFlightCloseOrder) : IOrderRepository
+    {
+        public Task<long> InsertAsync(Order order, CancellationToken cancellationToken = default) => Task.FromResult(order.Id);
+        public Task UpdateAsync(Order order, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<Order?> GetByIdAsync(long id, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
+        public Task<Order?> GetByExchangeOrderIdAsync(long exchangeOrderId, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
+        public Task<IReadOnlyList<Order>> GetOpenOrdersAsync(TradingSymbol? symbol = null, int? limit = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
+        public Task<IReadOnlyList<Order>> GetFilledOrdersAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
+        public Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusAsync(ProcessingStatus processingStatus, int? limit = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
+        public Task<int> GetInFlightOpeningOrderCountAsync(CancellationToken cancellationToken = default) => Task.FromResult(0);
+        public Task<bool> HasInFlightClosingOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default) => Task.FromResult(hasInFlightCloseOrder);
+        public Task<bool> HasActiveCloseOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default) => Task.FromResult(hasInFlightCloseOrder);
+        public Task<IReadOnlyList<Order>> GetOpenOrdersForWorkerAsync(System.Data.IDbTransaction transaction, TradingSymbol? symbol, int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
+        public Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusForWorkerAsync(System.Data.IDbTransaction transaction, ProcessingStatus processingStatus, int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
     }
 
     private sealed class FakePositionRepository(Position? openPosition) : IPositionRepository

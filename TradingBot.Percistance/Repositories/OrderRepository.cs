@@ -181,7 +181,50 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
         return result.ToList();
     }
 
+    public async Task<int> GetInFlightOpeningOrderCountAsync(CancellationToken cancellationToken = default)
+    {
+        var terminalStatuses = new[]
+        {
+            OrderStatuses.CANCELED,
+            OrderStatuses.REJECTED,
+            OrderStatuses.EXPIRED,
+            OrderStatuses.EXPIRED_IN_MATCH
+        };
+
+        var terminalProcessingStatuses = new[]
+        {
+            ProcessingStatus.PositionUpdated,
+            ProcessingStatus.Completed
+        };
+
+        const string sql = """
+            SELECT COUNT(1)
+            FROM orders
+            WHERE side = @BuySide
+              AND close_reason = @CloseReasonNone
+              AND status <> ALL(@TerminalStatuses)
+              AND processing_status <> ALL(@TerminalProcessingStatuses);
+            """;
+
+        return await connection.ExecuteScalarAsync<int>(
+            new CommandDefinition(
+                sql,
+                new
+                {
+                    BuySide = (int)OrderSide.BUY,
+                    CloseReasonNone = (int)CloseReason.None,
+                    TerminalStatuses = terminalStatuses.Select(x => (int)x).ToArray(),
+                    TerminalProcessingStatuses = terminalProcessingStatuses.Select(x => (int)x).ToArray()
+                },
+                cancellationToken: cancellationToken));
+    }
+
     public async Task<bool> HasActiveCloseOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default)
+    {
+        return await HasInFlightClosingOrderForPositionAsync(parentPositionId, cancellationToken);
+    }
+
+    public async Task<bool> HasInFlightClosingOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default)
     {
         const string sql = """
             SELECT 1
@@ -189,8 +232,8 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
             WHERE parent_position_id = @ParentPositionId
               AND side = @SellSide
               AND close_reason <> @CloseReasonNone
-              AND status = ANY(@ActiveStatuses)
-              AND processing_status <> ALL(@InactiveProcessingStatuses)
+              AND status <> ALL(@TerminalStatuses)
+              AND processing_status <> ALL(@AccountedProcessingStatuses)
             LIMIT 1;
             """;
 
@@ -202,16 +245,16 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
                     ParentPositionId = parentPositionId,
                     SellSide = (int)OrderSide.SELL,
                     CloseReasonNone = (int)CloseReason.None,
-                    ActiveStatuses = new[]
+                    TerminalStatuses = new[]
                     {
-                        (int)OrderStatuses.NEW,
-                        (int)OrderStatuses.PARTIALLY_FILLED,
-                        (int)OrderStatuses.FILLED
+                        (int)OrderStatuses.CANCELED,
+                        (int)OrderStatuses.REJECTED,
+                        (int)OrderStatuses.EXPIRED,
+                        (int)OrderStatuses.EXPIRED_IN_MATCH
                     },
-                    InactiveProcessingStatuses = new[]
+                    AccountedProcessingStatuses = new[]
                     {
                         (int)ProcessingStatus.PositionUpdated,
-                        (int)ProcessingStatus.PositionUpdateFailed,
                         (int)ProcessingStatus.Completed
                     }
                 },

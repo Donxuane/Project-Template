@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Interfaces.Services;
+using TradingBot.Shared.Configuration;
 
 namespace TradingBot.Application.BackgroundHostService.Services;
 
@@ -8,15 +9,16 @@ public class ConfidenceGate(
     IConfiguration configuration,
     ILogger<ConfidenceGate> logger) : IConfidenceGate
 {
-    private const decimal DefaultMinConfidence = 0.70m;
-
     public Task<ConfidenceGateResult> EvaluateAsync(ConfidenceGateRequest request, CancellationToken cancellationToken = default)
     {
         var normalizedStrategyName = NormalizeStrategyName(request.StrategyName);
-        var strategyKey = $"DecisionEngine:Strategies:{normalizedStrategyName}:MinConfidence";
-        var strategySpecific = configuration.GetValue<decimal?>(strategyKey);
-        var global = configuration.GetValue<decimal?>("DecisionEngine:MinConfidence");
-        var minConfidence = Math.Clamp(strategySpecific ?? global ?? DefaultMinConfidence, 0m, 1m);
+        var thresholdResolution = RuntimeTradingConfigResolver.ResolveConfidenceThreshold(
+            configuration,
+            normalizedStrategyName,
+            request.Action.ToString(),
+            request.TradingMode.ToString(),
+            request.ExecutionIntent.ToString());
+        var minConfidence = Math.Clamp(thresholdResolution.MinConfidence, 0m, 1m);
 
         var allowed = request.Confidence >= minConfidence;
         var reason = allowed
@@ -24,7 +26,7 @@ public class ConfidenceGate(
             : "Confidence below minimum threshold.";
 
         logger.LogInformation(
-            "ConfidenceGate evaluated: StrategyName={StrategyName}, Symbol={Symbol}, Action={Action}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, Confidence={Confidence:F4}, MinConfidence={MinConfidence:F4}, Allowed={Allowed}, Reason={Reason}",
+            "ConfidenceGate evaluated: StrategyName={StrategyName}, Symbol={Symbol}, Action={Action}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, Confidence={Confidence:F4}, MinConfidence={MinConfidence:F4}, ThresholdKind={ThresholdKind}, ThresholdSource={ThresholdSource}, Allowed={Allowed}, Reason={Reason}",
             normalizedStrategyName,
             request.Symbol,
             request.Action,
@@ -32,6 +34,8 @@ public class ConfidenceGate(
             request.ExecutionIntent,
             request.Confidence,
             minConfidence,
+            thresholdResolution.ThresholdKind,
+            thresholdResolution.ThresholdSource,
             allowed,
             reason);
 

@@ -17,6 +17,7 @@ builder.Services.ConfigureServices(builder.Configuration);
 builder.Services.ConfigApplication();
 builder.Services.AddSettings(builder.Configuration);
 builder.Services.Configure<TrendStateSettings>(builder.Configuration.GetSection(TrendStateSettings.SectionName));
+builder.Services.AddHostedService<RuntimeTradingConfigurationDiagnosticsHostedService>();
 
 var app = builder.Build();
 

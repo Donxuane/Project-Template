@@ -14,7 +14,8 @@ public record PlaceSpotOrderCommand(
     OrderSource OrderSource = OrderSource.Unknown,
     CloseReason CloseReason = CloseReason.None,
     long? ParentPositionId = null,
-    string? CorrelationId = null
+    string? CorrelationId = null,
+    decimal? CandidatePrice = null
 ) : IRequest<PlaceSpotOrderResult>;
 
 public sealed class PlaceSpotOrderResult

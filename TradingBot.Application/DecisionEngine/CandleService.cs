@@ -77,7 +77,9 @@ public class CandleService(
             candles = buffer.Candles.ToArray();
         }
 
-        var currentPrice = await GetCurrentPriceAsync(symbol, candles[^1].Close, cancellationToken);
+        var latestClosedCandle = ResolveLatestClosedCandle(candles);
+        var fallbackPrice = latestClosedCandle?.Close ?? candles[^1].Close;
+        var currentPrice = await GetCurrentPriceAsync(symbol, fallbackPrice, latestClosedCandle?.CloseTimeUtc, cancellationToken);
         if (count < requiredCandles)
         {
             logger.LogWarning(
@@ -88,7 +90,13 @@ public class CandleService(
         return new MarketSnapshot
         {
             Symbol = symbol,
-            CurrentPrice = currentPrice,
+            CurrentPrice = currentPrice.Price,
+            CurrentPriceSource = currentPrice.Source,
+            CurrentPriceAsOfUtc = currentPrice.AsOfUtc,
+            MarketDataAgeSeconds = currentPrice.AgeSeconds,
+            LatestClosedCandleOpenTimeUtc = latestClosedCandle?.OpenTimeUtc,
+            LatestClosedCandleCloseTimeUtc = latestClosedCandle?.CloseTimeUtc,
+            LatestClosedCandleClosePrice = latestClosedCandle?.Close,
             HighPrices = candles.Select(c => c.High).ToArray(),
             LowPrices = candles.Select(c => c.Low).ToArray(),
             ClosePrices = candles.Select(c => c.Close).ToArray(),
@@ -110,15 +118,33 @@ public class CandleService(
         }
     }
 
-    private async Task<decimal> GetCurrentPriceAsync(TradingSymbol symbol, decimal fallbackPrice, CancellationToken cancellationToken)
+    private async Task<ResolvedCurrentPrice> GetCurrentPriceAsync(
+        TradingSymbol symbol,
+        decimal fallbackPrice,
+        DateTime? fallbackAsOfUtc,
+        CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var priceCacheService = scope.ServiceProvider.GetRequiredService<IPriceCacheService>();
-        var cached = await priceCacheService.GetCachedPriceAsync(symbol, cancellationToken);
-        if (cached.HasValue && cached.Value > 0m)
-            return cached.Value;
+        var cached = await priceCacheService.GetCachedPriceSnapshotAsync(symbol, cancellationToken);
+        if (cached is not null && cached.Price > 0m)
+        {
+            var ageSeconds = Math.Max(0m, (decimal)(DateTime.UtcNow - cached.AsOfUtc).TotalSeconds);
+            return new ResolvedCurrentPrice(
+                cached.Price,
+                string.IsNullOrWhiteSpace(cached.Source) ? "RedisTicker" : cached.Source,
+                cached.AsOfUtc,
+                ageSeconds);
+        }
 
-        return fallbackPrice > 0m ? fallbackPrice : 0m;
+        var fallback = fallbackPrice > 0m ? fallbackPrice : 0m;
+        var fallbackTimestamp = fallbackAsOfUtc ?? DateTime.UtcNow;
+        var fallbackAgeSeconds = Math.Max(0m, (decimal)(DateTime.UtcNow - fallbackTimestamp).TotalSeconds);
+        return new ResolvedCurrentPrice(
+            fallback,
+            "KlineFallback",
+            fallbackTimestamp,
+            fallbackAgeSeconds);
     }
 
     private async Task<IReadOnlyList<CandlePoint>> FetchCandlesAsync(TradingSymbol symbol, int limit, CancellationToken cancellationToken)
@@ -157,7 +183,7 @@ public class CandleService(
         var candles = new List<CandlePoint>();
         foreach (var item in raw.EnumerateArray())
         {
-            if (item.ValueKind != JsonValueKind.Array || item.GetArrayLength() <= 5)
+            if (item.ValueKind != JsonValueKind.Array || item.GetArrayLength() <= 6)
                 continue;
 
             if (!TryParseUnixMs(item[0], out var openTimeMs))
@@ -170,9 +196,12 @@ public class CandleService(
                 continue;
             if (!TryParseDecimal(item[5], out var volume))
                 continue;
+            if (!TryParseUnixMs(item[6], out var closeTimeMs))
+                continue;
 
             candles.Add(new CandlePoint(
                 DateTimeOffset.FromUnixTimeMilliseconds(openTimeMs).UtcDateTime,
+                DateTimeOffset.FromUnixTimeMilliseconds(closeTimeMs).UtcDateTime,
                 high,
                 low,
                 close,
@@ -220,6 +249,21 @@ public class CandleService(
         return Math.Max(value, minValue);
     }
 
+    private static CandlePoint? ResolveLatestClosedCandle(IReadOnlyList<CandlePoint> candles)
+    {
+        if (candles.Count == 0)
+            return null;
+
+        var nowUtc = DateTime.UtcNow;
+        for (var i = candles.Count - 1; i >= 0; i--)
+        {
+            if (candles[i].CloseTimeUtc <= nowUtc)
+                return candles[i];
+        }
+
+        return candles[^1];
+    }
+
     private sealed class SymbolCandleBuffer
     {
         public object SyncRoot { get; } = new();
@@ -265,8 +309,15 @@ public class CandleService(
 
     private sealed record CandlePoint(
         DateTime OpenTimeUtc,
+        DateTime CloseTimeUtc,
         decimal High,
         decimal Low,
         decimal Close,
         decimal Volume);
+
+    private sealed record ResolvedCurrentPrice(
+        decimal Price,
+        string Source,
+        DateTime AsOfUtc,
+        decimal AgeSeconds);
 }

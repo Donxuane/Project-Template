@@ -24,8 +24,10 @@ public class BinanceOrderNormalizationService(
             throw new InvalidOperationException($"Exchange info for symbol '{symbol}' was not found.");
 
         var lotSize = symbolInfo.Filters.OfType<LotSizeFilter>().FirstOrDefault(f => f.FilterType == "LOT_SIZE");
+        var marketLotSize = symbolInfo.Filters.OfType<MarketLotSizeFilter>().FirstOrDefault(f => f.FilterType == "MARKET_LOT_SIZE");
         var priceFilter = symbolInfo.Filters.OfType<PriceFilter>().FirstOrDefault(f => f.FilterType == "PRICE_FILTER");
-        var notionalFilter = symbolInfo.Filters.OfType<NotionalFilter>().FirstOrDefault(f => f.FilterType == "NOTIONAL");
+        var notionalFilter = symbolInfo.Filters.OfType<NotionalFilter>().FirstOrDefault(f => f.FilterType == "NOTIONAL")
+                             ?? symbolInfo.Filters.OfType<NotionalFilter>().FirstOrDefault(f => f.FilterType == "MIN_NOTIONAL");
 
         return new BinanceSymbolFilters
         {
@@ -33,6 +35,9 @@ public class BinanceOrderNormalizationService(
             StepSize = ParsePositiveDecimalOrNull(lotSize?.StepSize),
             MinQty = ParsePositiveDecimalOrNull(lotSize?.MinQty),
             MaxQty = ParsePositiveDecimalOrNull(lotSize?.MaxQty),
+            MarketStepSize = ParsePositiveDecimalOrNull(marketLotSize?.StepSize),
+            MarketMinQty = ParsePositiveDecimalOrNull(marketLotSize?.MinQty),
+            MarketMaxQty = ParsePositiveDecimalOrNull(marketLotSize?.MaxQty),
             TickSize = ParsePositiveDecimalOrNull(priceFilter?.TickSize),
             MinPrice = ParsePositiveDecimalOrNull(priceFilter?.MinPrice),
             MaxPrice = ParsePositiveDecimalOrNull(priceFilter?.MaxPrice),
@@ -86,7 +91,8 @@ public class BinanceOrderNormalizationService(
             if (normalized.Quantity.Value <= 0m)
                 throw new InvalidOperationException("Quantity must be greater than zero.");
 
-            normalizedQuantity = FloorToStep(normalized.Quantity.Value, filters.StepSize);
+            var quantityStep = ResolveQuantityStep(normalized, filters);
+            normalizedQuantity = FloorToStep(normalized.Quantity.Value, quantityStep);
             if (normalizedQuantity <= 0m)
                 throw new InvalidOperationException("Quantity becomes zero after LOT_SIZE normalization.");
 
@@ -150,12 +156,16 @@ public class BinanceOrderNormalizationService(
         if (request.Quantity.HasValue)
         {
             var quantity = request.Quantity.Value;
-            if (filters.MinQty.HasValue && quantity < filters.MinQty.Value)
-                throw new InvalidOperationException($"Normalized quantity {quantity} is below minQty {filters.MinQty.Value}.");
-            if (filters.MaxQty.HasValue && quantity > filters.MaxQty.Value)
-                throw new InvalidOperationException($"Normalized quantity {quantity} is above maxQty {filters.MaxQty.Value}.");
-            if (!IsStepAligned(quantity, filters.StepSize))
-                throw new InvalidOperationException($"Normalized quantity {quantity} does not align with stepSize {filters.StepSize}.");
+            var minQty = ResolveMinQuantity(request, filters);
+            var maxQty = ResolveMaxQuantity(request, filters);
+            var stepSize = ResolveQuantityStep(request, filters);
+
+            if (minQty.HasValue && quantity < minQty.Value)
+                throw new InvalidOperationException($"Normalized quantity {quantity} is below minQty {minQty.Value}.");
+            if (maxQty.HasValue && quantity > maxQty.Value)
+                throw new InvalidOperationException($"Normalized quantity {quantity} is above maxQty {maxQty.Value}.");
+            if (!IsStepAligned(quantity, stepSize))
+                throw new InvalidOperationException($"Normalized quantity {quantity} does not align with stepSize {stepSize}.");
         }
 
         if (request.Type == Domain.Enums.Binance.OrderTypes.LIMIT && request.Price.HasValue)
@@ -180,6 +190,30 @@ public class BinanceOrderNormalizationService(
             if (filters.MaxNotional.HasValue && notional.Value > filters.MaxNotional.Value)
                 throw new InvalidOperationException($"Order notional {notional.Value} is above maxNotional {filters.MaxNotional.Value}.");
         }
+    }
+
+    private static decimal? ResolveQuantityStep(NewOrderRequest request, BinanceSymbolFilters filters)
+    {
+        if (request.Type == Domain.Enums.Binance.OrderTypes.MARKET)
+            return filters.MarketStepSize ?? filters.StepSize;
+
+        return filters.StepSize;
+    }
+
+    private static decimal? ResolveMinQuantity(NewOrderRequest request, BinanceSymbolFilters filters)
+    {
+        if (request.Type == Domain.Enums.Binance.OrderTypes.MARKET)
+            return filters.MarketMinQty ?? filters.MinQty;
+
+        return filters.MinQty;
+    }
+
+    private static decimal? ResolveMaxQuantity(NewOrderRequest request, BinanceSymbolFilters filters)
+    {
+        if (request.Type == Domain.Enums.Binance.OrderTypes.MARKET)
+            return filters.MarketMaxQty ?? filters.MaxQty;
+
+        return filters.MaxQty;
     }
 
     private static NewOrderRequest CloneRequest(NewOrderRequest request)

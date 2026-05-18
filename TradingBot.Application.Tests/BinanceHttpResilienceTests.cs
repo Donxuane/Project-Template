@@ -288,6 +288,17 @@ public class BinanceHttpResilienceTests
         public Task<decimal?> GetCachedPriceAsync(TradingSymbol symbol, CancellationToken cancellationToken = default)
             => Task.FromResult(Stored.TryGetValue(symbol, out var value) ? (decimal?)value : null);
 
+        public Task<PriceSnapshot?> GetCachedPriceSnapshotAsync(TradingSymbol symbol, CancellationToken cancellationToken = default)
+            => Task.FromResult(
+                Stored.TryGetValue(symbol, out var value)
+                    ? new PriceSnapshot
+                    {
+                        Price = value,
+                        AsOfUtc = DateTime.UtcNow,
+                        Source = "RedisTicker"
+                    }
+                    : null);
+
         public Task SetCachedPriceAsync(TradingSymbol symbol, decimal price, CancellationToken cancellationToken = default)
         {
             Stored[symbol] = price;

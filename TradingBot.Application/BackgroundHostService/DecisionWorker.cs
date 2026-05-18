@@ -11,6 +11,7 @@ using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Interfaces.Services.Decision;
 using TradingBot.Domain.Models.Decision;
+using TradingBot.Shared.Configuration;
 
 namespace TradingBot.Application.BackgroundHostService;
 
@@ -69,8 +70,17 @@ public class DecisionWorker(
                     var confidenceGate = scope.ServiceProvider.GetRequiredService<IConfidenceGate>();
                     foreach (var symbol in settings.Symbols)
                     {
+                        var requestedQuantity = ResolveQuantityForSymbol(symbol, settings);
+                        var hasSymbolOverride = settings.SymbolQuantities.ContainsKey(symbol);
+                        logger.LogInformation(
+                            "DecisionWorker resolved symbol quantity: Symbol={Symbol}, RequestedQuantity={RequestedQuantity}, HasSymbolOverride={HasSymbolOverride}, GlobalQuantity={GlobalQuantity}",
+                            symbol,
+                            requestedQuantity,
+                            hasSymbolOverride,
+                            settings.Quantity);
                         await ProcessSymbolAsync(
                             symbol,
+                            requestedQuantity,
                             settings,
                             correlationId,
                             stoppingToken,
@@ -104,6 +114,7 @@ public class DecisionWorker(
 
     private async Task ProcessSymbolAsync(
         TradingSymbol symbol,
+        decimal requestedQuantity,
         DecisionWorkerSettings settings,
         string correlationId,
         CancellationToken stoppingToken,
@@ -120,7 +131,7 @@ public class DecisionWorker(
     {
         try
         {
-            var decision = await tradeDecisionService.MakeDecision(symbol, settings.Quantity, stoppingToken);
+            var decision = await tradeDecisionService.MakeDecision(symbol, requestedQuantity, stoppingToken);
             var side = decision.Candidate?.Side ?? InferSideFromAction(decision.Action);
             var rawSignal = decision.RawSignal == default && decision.Action != TradeSignal.Hold
                 ? decision.Action
@@ -128,7 +139,7 @@ public class DecisionWorker(
             var tradingMode = decision.Candidate?.TradingMode ?? decision.TradingMode;
             var executionIntent = decision.Candidate?.ExecutionIntent ?? decision.ExecutionIntent;
             var strategyName = string.IsNullOrWhiteSpace(decision.StrategyName) ? "Unknown" : decision.StrategyName;
-            var executionQuantity = decision.Candidate?.Quantity ?? settings.Quantity;
+            var executionQuantity = decision.Candidate?.Quantity ?? requestedQuantity;
             var price = decision.Candidate?.Price ?? 0m;
             var decisionId = CreateDecisionId(
                 correlationId,
@@ -166,7 +177,7 @@ public class DecisionWorker(
                 GuardStage = GuardStage.None,
                 Confidence = decision.Confidence,
                 Reason = decision.Reason,
-                MinConfidence = settings.MinExecutionConfidence
+                MinConfidence = null
             };
 
 
@@ -428,7 +439,8 @@ public class DecisionWorker(
                     Quantity = executionQuantity,
                     TradingMode = tradingMode,
                     RawSignal = rawSignal,
-                    ExecutionIntent = executionIntent
+                    ExecutionIntent = executionIntent,
+                    CandidatePrice = price > 0m ? price : null
                 },
                 stoppingToken);
 
@@ -471,21 +483,13 @@ public class DecisionWorker(
 
     private DecisionWorkerSettings ReadSettings()
     {
-        var intervalSeconds = Math.Max(1, configuration.GetValue<int?>("DecisionEngine:IntervalSeconds") ?? DefaultIntervalSeconds);
-        var quantity = configuration.GetValue<decimal?>("DecisionEngine:Quantity") ?? DefaultQuantity;
-        var executionEnabled = configuration.GetValue<bool?>("ExecutionSettings:Enabled") ?? false;
-        var useMarketOrders = configuration.GetValue<bool?>("ExecutionSettings:UseMarketOrders") ?? true;
-        var minExecutionConfidence = configuration.GetValue<decimal?>("DecisionEngine:MinExecutionConfidence")
-                            ?? configuration.GetValue<decimal?>("DecisionEngine:MinConfidence")
-                            ?? configuration.GetValue<decimal?>("DecisionEngine:MinConfidenceThreshold")
-                            ?? DefaultMinExecutionConfidence;
+        var decision = RuntimeTradingConfigResolver.ResolveDecisionEngine(configuration);
+        var execution = RuntimeTradingConfigResolver.ResolveExecution(configuration);
         var cooldownSeconds = Math.Max(0,
             configuration.GetValue<int?>("Trading:CooldownSeconds")
-            ?? configuration.GetValue<int?>("DecisionEngine:TradeCooldownSeconds")
-            ?? DefaultTradeCooldownSeconds);
-        var idempotencyWindowSeconds = Math.Max(10, configuration.GetValue<int?>("DecisionEngine:IdempotencyWindowSeconds") ?? DefaultIdempotencyWindowSeconds);
+            ?? decision.TradeCooldownSeconds);
 
-        var configuredSymbols = configuration.GetSection("DecisionEngine:Symbols").Get<string[]>() ?? [];
+        var configuredSymbols = decision.Symbols?.ToArray() ?? [];
         var parsedSymbols = configuredSymbols
             .Select(x => Enum.TryParse<TradingSymbol>(x, true, out var symbol) ? symbol : (TradingSymbol?)null)
             .Where(x => x.HasValue)
@@ -495,22 +499,56 @@ public class DecisionWorker(
 
         if (parsedSymbols.Count == 0)
         {
-            var symbolText = configuration.GetValue<string>("DecisionEngine:Symbol") ?? DefaultSymbol;
+            var symbolText = decision.Symbol ?? DefaultSymbol;
             var symbol = Enum.TryParse<TradingSymbol>(symbolText, true, out var parsed) ? parsed : TradingSymbol.BTCUSDT;
             parsedSymbols.Add(symbol);
         }
 
+        var symbolQuantities = new Dictionary<TradingSymbol, decimal>();
+        foreach (var pair in decision.SymbolQuantities)
+        {
+            if (!Enum.TryParse<TradingSymbol>(pair.Key, true, out var symbol))
+            {
+                logger.LogWarning(
+                    "DecisionWorker ignored invalid symbol quantity key. Symbol={SymbolKey}",
+                    pair.Key);
+                continue;
+            }
+
+            var symbolQuantity = pair.Value;
+
+            if (symbolQuantity <= 0m)
+            {
+                logger.LogWarning(
+                    "DecisionWorker ignored non-positive symbol quantity. Symbol={Symbol}, Quantity={Quantity}",
+                    symbol,
+                    symbolQuantity);
+                continue;
+            }
+
+            symbolQuantities[symbol] = symbolQuantity;
+        }
+
         return new DecisionWorkerSettings
         {
-            IntervalSeconds = intervalSeconds,
-            Quantity = quantity,
+            IntervalSeconds = decision.IntervalSeconds,
+            Quantity = decision.Quantity,
             Symbols = parsedSymbols,
-            ExecutionEnabled = executionEnabled,
-            UseMarketOrders = useMarketOrders,
-            MinExecutionConfidence = Math.Clamp(minExecutionConfidence, 0m, 1m),
+            SymbolQuantities = symbolQuantities,
+            ExecutionEnabled = execution.Enabled,
+            UseMarketOrders = execution.UseMarketOrders,
+            MinExecutionConfidence = Math.Clamp(decision.MinExecutionConfidence, 0m, 1m),
             TradeCooldownSeconds = cooldownSeconds,
-            IdempotencyWindowSeconds = idempotencyWindowSeconds
+            IdempotencyWindowSeconds = decision.IdempotencyWindowSeconds
         };
+    }
+
+    private static decimal ResolveQuantityForSymbol(TradingSymbol symbol, DecisionWorkerSettings settings)
+    {
+        if (settings.SymbolQuantities.TryGetValue(symbol, out var symbolQuantity) && symbolQuantity > 0m)
+            return symbolQuantity;
+
+        return settings.Quantity;
     }
 
     private static OrderSide? InferSideFromAction(TradeSignal action)
@@ -554,6 +592,7 @@ public class DecisionWorker(
         public int IntervalSeconds { get; init; }
         public decimal Quantity { get; init; }
         public required IReadOnlyList<TradingSymbol> Symbols { get; init; }
+        public required IReadOnlyDictionary<TradingSymbol, decimal> SymbolQuantities { get; init; }
         public bool ExecutionEnabled { get; init; }
         public bool UseMarketOrders { get; init; }
         public decimal MinExecutionConfidence { get; init; }

@@ -136,7 +136,7 @@ public class PlaceSpotOrderCommandHandler(
             var finalQueryString = BinanceRequestQueryBuilder.BuildQueryString(finalQueryParameters);
 
             logger.LogInformation(
-                "Sending Binance order: Symbol={Symbol}, Side={Side}, Type={Type}, OrderSource={OrderSource}, CloseReason={CloseReason}, ParentPositionId={ParentPositionId}, CorrelationId={CorrelationId}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, OriginalQuantity={OriginalQuantity}, NormalizedQuantity={NormalizedQuantity}, FormattedQuantity={FormattedQuantity}, OriginalPrice={OriginalPrice}, NormalizedPrice={NormalizedPrice}, FormattedPrice={FormattedPrice}, StepSize={StepSize}, TickSize={TickSize}, MinQty={MinQty}, MaxQty={MaxQty}, MinNotional={MinNotional}, EffectivePrice={EffectivePrice}, Notional={Notional}, FinalQueryParams={FinalQueryParams}",
+                "Sending Binance order: Symbol={Symbol}, Side={Side}, Type={Type}, OrderSource={OrderSource}, CloseReason={CloseReason}, ParentPositionId={ParentPositionId}, CorrelationId={CorrelationId}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, CandidatePrice={CandidatePrice}, OriginalQuantity={OriginalQuantity}, NormalizedQuantity={NormalizedQuantity}, FormattedQuantity={FormattedQuantity}, OriginalPrice={OriginalPrice}, NormalizedPrice={NormalizedPrice}, FormattedPrice={FormattedPrice}, StepSize={StepSize}, TickSize={TickSize}, MinQty={MinQty}, MaxQty={MaxQty}, MinNotional={MinNotional}, EffectivePrice={EffectivePrice}, Notional={Notional}, FinalQueryParams={FinalQueryParams}",
                 normalizedRequest.Symbol,
                 normalizedRequest.Side,
                 normalizedRequest.Type,
@@ -146,6 +146,7 @@ public class PlaceSpotOrderCommandHandler(
                 request.CorrelationId,
                 TradingMode.Spot,
                 request.Side == OrderSide.BUY ? TradeExecutionIntent.OpenLong : TradeExecutionIntent.CloseLong,
+                request.CandidatePrice,
                 normalizedOrder.OriginalQuantity,
                 normalizedOrder.NormalizedQuantity,
                 normalizedOrder.NormalizedQuantity.HasValue ? BinanceDecimalFormatter.FormatQuantity(normalizedOrder.NormalizedQuantity.Value) : null,
@@ -207,6 +208,22 @@ public class PlaceSpotOrderCommandHandler(
                     };
                     await tradeExecutionRepository.InsertAsync(execution, cancellationToken);
                 }
+
+                var candidatePrice = request.CandidatePrice;
+                var fillVwap = CalculateFillVwap(exchangeOrder.Fills);
+                if (candidatePrice.HasValue && candidatePrice.Value > 0m && fillVwap.HasValue && fillVwap.Value > 0m)
+                {
+                    var slippagePercent = CalculateSlippagePercent(request.Side, candidatePrice.Value, fillVwap.Value);
+                    logger.LogInformation(
+                        "Post-fill slippage: Symbol={Symbol}, Side={Side}, LocalOrderId={LocalOrderId}, ExchangeOrderId={ExchangeOrderId}, CandidatePrice={CandidatePrice}, FillVwapPrice={FillVwapPrice}, SlippagePercent={SlippagePercent}",
+                        request.Symbol,
+                        request.Side,
+                        order.Id,
+                        order.ExchangeOrderId,
+                        candidatePrice.Value,
+                        fillVwap.Value,
+                        slippagePercent);
+                }
             }
 
             await tradeCooldownService.MarkTradeExecutedAsync(request.Symbol, cancellationToken);
@@ -258,6 +275,37 @@ public class PlaceSpotOrderCommandHandler(
             }, endpoint, false);
 
         return decimal.Parse(response.Price, CultureInfo.InvariantCulture);
+    }
+
+    private static decimal? CalculateFillVwap(IReadOnlyCollection<Fill> fills)
+    {
+        if (fills.Count == 0)
+            return null;
+
+        decimal quoteSum = 0m;
+        decimal quantitySum = 0m;
+        foreach (var fill in fills)
+        {
+            var price = fill.Price.ToDecimal();
+            var qty = fill.Qty.ToDecimal();
+            if (price <= 0m || qty <= 0m)
+                continue;
+
+            quoteSum += price * qty;
+            quantitySum += qty;
+        }
+
+        return quantitySum > 0m ? quoteSum / quantitySum : null;
+    }
+
+    private static decimal CalculateSlippagePercent(OrderSide side, decimal candidatePrice, decimal fillVwap)
+    {
+        if (candidatePrice <= 0m)
+            return 0m;
+
+        return side == OrderSide.BUY
+            ? ((fillVwap - candidatePrice) / candidatePrice) * 100m
+            : ((candidatePrice - fillVwap) / candidatePrice) * 100m;
     }
 }
 

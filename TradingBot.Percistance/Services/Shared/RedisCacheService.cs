@@ -47,7 +47,31 @@ public class RedisCacheService(IConnectionMultiplexer redis, ILogger<RedisCacheS
                 value,
                 DateTime.Now
             );
-            return value.HasValue ? JsonSerializer.Deserialize<TResponse>(value!) : default;
+            if (!value.HasValue)
+                return default;
+
+            try
+            {
+                return JsonSerializer.Deserialize<TResponse>(
+                    value!,
+                    new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+            }
+            catch (JsonException jsonEx)
+            {
+                logger.LogError(
+                    jsonEx,
+                    @"Cached value deserialization failed and key will be evicted.
+                      DateTime: {date}
+                      Key: {key}",
+                    DateTime.Now,
+                    key
+                );
+                await database.KeyDeleteAsync(key);
+                return default;
+            }
         }
         catch (Exception ex)
         {

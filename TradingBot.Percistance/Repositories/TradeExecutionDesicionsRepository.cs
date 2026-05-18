@@ -101,4 +101,62 @@ public class TradeExecutionDesicionsRepository(IOptions<ConnectionStrings> conne
         await connection.OpenAsync();
         await connection.ExecuteAsync(sql, desicion);
     }
+
+    public async Task<TradeExecutionDecisions?> GetLatestByLocalOrderOrCorrelationAsync(
+        long localOrderId,
+        string? correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        const string sql = @"
+        SELECT
+            id AS Id,
+            correlationid AS CorrelationId,
+            decisionid AS DecisionId,
+            idempotencykey AS IdempotencyKey,
+            strategyname AS StrategyName,
+            symbol AS Symbol,
+            action AS Action,
+            rawsignal AS RawSignal,
+            tradingmode AS TradingMode,
+            executionintent AS ExecutionIntent,
+            side AS Side,
+            decisionstatus AS DecisionStatus,
+            guardstage AS GuardStage,
+            confidence AS Confidence,
+            minconfidence AS MinConfidence,
+            reason AS Reason,
+            isincooldown AS IsInCooldown,
+            cooldownremainingseconds AS CooldownRemainingSeconds,
+            cooldownlasttrade AS CooldownLastTrade,
+            idempotencyduplicate AS IdempotencyDuplicate,
+            riskisallowed AS RiskIsAllowed,
+            riskreason AS RiskReason,
+            stoplossprice AS StopLossPrice,
+            takeprofitprice AS TakeProfitPrice,
+            executionsuccess AS ExecutionSuccess,
+            localorderid AS LocalOrderId,
+            exchangeorderid AS ExchangeOrderId,
+            executionerror AS ExecutionError,
+            created_at AS Created_At,
+            updated_at AS Updated_At
+        FROM trade_execution_decisions
+        WHERE localorderid = @LocalOrderId
+           OR (@CorrelationId IS NOT NULL AND correlationid = @CorrelationId)
+        ORDER BY
+            CASE WHEN localorderid = @LocalOrderId THEN 0 ELSE 1 END,
+            created_at DESC
+        LIMIT 1;";
+
+        using var connection = new NpgsqlConnection(connections.Value.MainStorage);
+        await connection.OpenAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<TradeExecutionDecisions>(
+            new CommandDefinition(
+                sql,
+                new
+                {
+                    LocalOrderId = localOrderId,
+                    CorrelationId = string.IsNullOrWhiteSpace(correlationId) ? null : correlationId
+                },
+                cancellationToken: cancellationToken));
+    }
 }

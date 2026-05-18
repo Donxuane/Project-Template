@@ -5,6 +5,7 @@ using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
+using TradingBot.Domain.Models.MarketData;
 using TradingBot.Domain.Models.Trading;
 using Xunit;
 
@@ -191,6 +192,13 @@ public class FeeProfitGuardTests
     private sealed class FakePriceCacheService(decimal price) : IPriceCacheService
     {
         public Task<decimal?> GetCachedPriceAsync(TradingSymbol symbol, CancellationToken cancellationToken = default) => Task.FromResult<decimal?>(price);
+        public Task<PriceSnapshot?> GetCachedPriceSnapshotAsync(TradingSymbol symbol, CancellationToken cancellationToken = default)
+            => Task.FromResult<PriceSnapshot?>(new PriceSnapshot
+            {
+                Price = price,
+                AsOfUtc = DateTime.UtcNow,
+                Source = "RedisTicker"
+            });
         public Task SetCachedPriceAsync(TradingSymbol symbol, decimal price, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

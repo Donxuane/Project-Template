@@ -7,5 +7,7 @@ public interface IPositionAccountingService
     PositionAccountingResult ApplyTrades(
         Position? currentPosition,
         Order order,
-        IReadOnlyList<TradeExecution> trades);
+        IReadOnlyList<TradeExecution> trades,
+        decimal? stopLossPrice = null,
+        decimal? takeProfitPrice = null);
 }

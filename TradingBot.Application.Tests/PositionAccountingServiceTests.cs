@@ -28,6 +28,57 @@ public class PositionAccountingServiceTests
     }
 
     [Fact]
+    public void OpenLongPosition_PersistsProvidedProtectionTargets()
+    {
+        var order = CreateOrder(OrderSide.BUY, TradingSymbol.BNBUSDT);
+        var trades = new[] { CreateTrade(101, OrderSide.BUY, 620m, 0.01m) };
+
+        var result = _service.ApplyTrades(
+            null,
+            order,
+            trades,
+            stopLossPrice: 613.8m,
+            takeProfitPrice: 632.4m);
+
+        Assert.True(result.Position.IsOpen);
+        Assert.Equal(613.8m, result.Position.StopLossPrice);
+        Assert.Equal(632.4m, result.Position.TakeProfitPrice);
+    }
+
+    [Fact]
+    public void OpenLongPosition_WithNullProtectionTargets_DoesNotThrowOrSetTargets()
+    {
+        var order = CreateOrder(OrderSide.BUY, TradingSymbol.BNBUSDT);
+        var trades = new[] { CreateTrade(102, OrderSide.BUY, 620m, 0.01m) };
+
+        var result = _service.ApplyTrades(null, order, trades, stopLossPrice: null, takeProfitPrice: null);
+
+        Assert.True(result.Position.IsOpen);
+        Assert.Null(result.Position.StopLossPrice);
+        Assert.Null(result.Position.TakeProfitPrice);
+    }
+
+    [Fact]
+    public void AddToLong_NullTargets_DoNotOverwriteExistingTargets()
+    {
+        var current = CreatePosition(0.01m, 620m, TradingSymbol.BNBUSDT);
+        current.StopLossPrice = 613.8m;
+        current.TakeProfitPrice = 632.4m;
+        var order = CreateOrder(OrderSide.BUY, TradingSymbol.BNBUSDT);
+        var trades = new[] { CreateTrade(103, OrderSide.BUY, 621m, 0.01m) };
+
+        var result = _service.ApplyTrades(
+            current,
+            order,
+            trades,
+            stopLossPrice: null,
+            takeProfitPrice: null);
+
+        Assert.Equal(613.8m, result.Position.StopLossPrice);
+        Assert.Equal(632.4m, result.Position.TakeProfitPrice);
+    }
+
+    [Fact]
     public void AddToLongUpdatesWeightedAverage()
     {
         var current = CreatePosition(1m, 100_000m);

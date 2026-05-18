@@ -6,6 +6,7 @@ using TradingBot.Domain.Extentions;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Utilities;
+using TradingBot.Shared.Configuration;
 
 namespace TradingBot.Percistance.Services.Main;
 
@@ -17,14 +18,15 @@ public class RiskManagementService(
     IPriceCacheService priceCacheService,
     ILogger<RiskManagementService> logger) : IRiskManagementService
 {
-    private decimal MaxPositionQuote => configuration.GetValue<decimal?>("RiskSettings:MaxPositionQuote") ?? 10_000m;
-    private decimal MaxOrderQuote => configuration.GetValue<decimal?>("RiskSettings:MaxOrderQuote") ?? 5_000m;
-    private decimal MaxExposurePercent => configuration.GetValue<decimal?>("RiskSettings:MaxExposurePercent") ?? 50m;
-    private decimal MinOrderQuote => configuration.GetValue<decimal?>("RiskSettings:MinOrderQuote") ?? 5m;
-    private decimal ReducedPositionMultiplier => configuration.GetValue<decimal?>("RiskSettings:ReducedPositionMultiplier") ?? 0.5m;
+    private readonly RiskRuntimeSettings _risk = RuntimeTradingConfigResolver.ResolveRisk(configuration);
+    private decimal MaxPositionQuote => _risk.MaxPositionQuote;
+    private decimal MaxOrderQuote => _risk.MaxOrderQuote;
+    private decimal MaxExposurePercent => _risk.MaxExposurePercent;
+    private decimal MinOrderQuote => _risk.MinOrderQuote;
+    private decimal ReducedPositionMultiplier => _risk.ReducedPositionMultiplier;
     private bool EnableDailyLossLimit => configuration.GetValue<bool?>("RiskSettings:EnableDailyLossLimit") ?? true;
     private decimal MaxDailyLossQuote => configuration.GetValue<decimal?>("RiskSettings:MaxDailyLossQuote") ?? 100m;
-    private int MaxOpenPositions => configuration.GetValue<int?>("RiskSettings:MaxOpenPositions") ?? 3;
+    private int MaxOpenPositions => _risk.MaxOpenPositions;
     private bool AllowShortSelling => configuration.GetValue<bool?>("RiskSettings:AllowShortSelling") ?? false;
     private int MinimumRiskScore => configuration.GetValue<int?>("RiskSettings:MinimumRiskScore") ?? 60;
     private decimal DefaultStopLossPercent => configuration.GetValue<decimal?>("RiskSettings:DefaultStopLossPercent") ?? 1.0m;
@@ -139,6 +141,7 @@ public class RiskManagementService(
         var balances = await balanceRepository.GetLatestForAllAsync(cancellationToken);
         var existingPosition = await positionRepository.GetOpenPositionAsync(symbol, cancellationToken);
         var openPositions = await positionRepository.GetOpenPositionsAsync(cancellationToken);
+        var inFlightOpeningOrdersCount = await orderRepository.GetInFlightOpeningOrderCountAsync(cancellationToken);
 
         if (EnableDailyLossLimit)
         {
@@ -160,12 +163,26 @@ public class RiskManagementService(
         }
 
         var hasPositionOnSymbol = openPositions.Any(p => p.Symbol == symbol);
-        if (!hasPositionOnSymbol && openPositions.Count >= Math.Max(1, MaxOpenPositions))
+        var effectiveOpenCount = openPositions.Count + inFlightOpeningOrdersCount;
+        var isSpotOpenLong = tradingMode == TradingMode.Spot
+                             && side == OrderSide.BUY
+                             && executionIntent == TradeExecutionIntent.OpenLong;
+        if (isSpotOpenLong && !hasPositionOnSymbol && effectiveOpenCount >= Math.Max(1, MaxOpenPositions))
         {
+            logger.LogInformation(
+                "RiskManagementService blocked by global max open positions: OpenPositionsCount={OpenPositionsCount}, InFlightOpeningOrdersCount={InFlightOpeningOrdersCount}, EffectiveOpenCount={EffectiveOpenCount}, MaxOpenPositions={MaxOpenPositions}, Symbol={Symbol}, Side={Side}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}",
+                openPositions.Count,
+                inFlightOpeningOrdersCount,
+                effectiveOpenCount,
+                MaxOpenPositions,
+                symbol,
+                side,
+                tradingMode,
+                executionIntent);
             return CreateBlocked(
                 symbol,
                 side,
-                $"Max open positions limit reached ({MaxOpenPositions}).",
+                $"Max open positions limit reached including in-flight opening orders. OpenPositions={openPositions.Count}, InFlightOpeningOrders={inFlightOpeningOrdersCount}, MaxOpenPositions={MaxOpenPositions}.",
                 quantity,
                 price,
                 0m,

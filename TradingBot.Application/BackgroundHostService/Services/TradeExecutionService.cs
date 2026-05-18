@@ -41,7 +41,8 @@ public class TradeExecutionService(
                         OrderSource: OrderSource.DecisionWorker,
                         CloseReason: closeReason,
                         ParentPositionId: parentPositionId,
-                        CorrelationId: request.CorrelationId),
+                        CorrelationId: request.CorrelationId,
+                        CandidatePrice: request.CandidatePrice),
                     cancellationToken);
 
                 if (orderResult.Success)

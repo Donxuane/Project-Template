@@ -48,6 +48,33 @@ public class DecisionServiceTradingModeTests
         Assert.Equal(TradeExecutionIntent.CloseLong, result.ExecutionIntent);
         Assert.NotNull(result.Candidate);
         Assert.Equal(OrderSide.SELL, result.Candidate!.Side);
+        Assert.Equal(0.05m, result.Candidate.Quantity);
+        Assert.False(result.Candidate.RequiresReducedPositionSize);
+    }
+
+    [Fact]
+    public async Task SpotSellWithOpenLong_IgnoresHighVolatilityReduction_AndUsesOpenQuantity()
+    {
+        var service = CreateService(
+            tradingMode: TradingMode.Spot,
+            signal: TradeSignal.Sell,
+            openPosition: new Position
+            {
+                Symbol = TradingSymbol.BNBUSDT,
+                Side = OrderSide.BUY,
+                Quantity = 0.01m,
+                IsOpen = true
+            },
+            requiresReducedPositionSize: true);
+
+        var result = await service.DecideAsync(TradingSymbol.BNBUSDT, 0.005m, CancellationToken.None);
+
+        Assert.Equal(TradeSignal.Sell, result.Action);
+        Assert.Equal(TradeExecutionIntent.CloseLong, result.ExecutionIntent);
+        Assert.NotNull(result.Candidate);
+        Assert.Equal(OrderSide.SELL, result.Candidate!.Side);
+        Assert.Equal(0.01m, result.Candidate.Quantity);
+        Assert.False(result.Candidate.RequiresReducedPositionSize);
     }
 
     [Fact]
@@ -67,6 +94,80 @@ public class DecisionServiceTradingModeTests
     }
 
     [Fact]
+    public async Task SpotBuy_WithFreshMarketDataAge_IsAllowed()
+    {
+        var service = CreateService(
+            tradingMode: TradingMode.Spot,
+            signal: TradeSignal.Buy,
+            openPosition: null,
+            marketDataAgeSeconds: 2m);
+
+        var result = await service.DecideAsync(TradingSymbol.BNBUSDT, 0.01m, CancellationToken.None);
+
+        Assert.Equal(TradeSignal.Buy, result.Action);
+        Assert.Equal(TradeExecutionIntent.OpenLong, result.ExecutionIntent);
+    }
+
+    [Fact]
+    public async Task SpotBuy_WithStaleMarketData_IsBlocked()
+    {
+        var service = CreateService(
+            tradingMode: TradingMode.Spot,
+            signal: TradeSignal.Buy,
+            openPosition: null,
+            marketDataAgeSeconds: 31m,
+            maxMarketDataAgeSeconds: 15,
+            currentPriceSource: "KlineFallback");
+
+        var result = await service.DecideAsync(TradingSymbol.BNBUSDT, 0.01m, CancellationToken.None);
+
+        Assert.Equal(TradeSignal.Hold, result.Action);
+        Assert.Equal(TradeExecutionIntent.OpenLong, result.ExecutionIntent);
+        Assert.Contains("market data stale", result.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SpotCloseLong_IsNotBlockedByStaleMarketData()
+    {
+        var service = CreateService(
+            tradingMode: TradingMode.Spot,
+            signal: TradeSignal.Sell,
+            openPosition: new Position
+            {
+                Symbol = TradingSymbol.BNBUSDT,
+                Side = OrderSide.BUY,
+                Quantity = 0.05m,
+                IsOpen = true
+            },
+            marketDataAgeSeconds: 31m,
+            maxMarketDataAgeSeconds: 15,
+            currentPriceSource: "KlineFallback");
+
+        var result = await service.DecideAsync(TradingSymbol.BNBUSDT, 0.01m, CancellationToken.None);
+
+        Assert.Equal(TradeSignal.Sell, result.Action);
+        Assert.Equal(TradeExecutionIntent.CloseLong, result.ExecutionIntent);
+    }
+
+    [Fact]
+    public async Task SpotBuy_WithHighVolatility_UsesReducedConfiguredQuantity()
+    {
+        var service = CreateService(
+            tradingMode: TradingMode.Spot,
+            signal: TradeSignal.Buy,
+            openPosition: null,
+            requiresReducedPositionSize: true);
+
+        var result = await service.DecideAsync(TradingSymbol.BNBUSDT, 0.01m, CancellationToken.None);
+
+        Assert.Equal(TradeSignal.Buy, result.Action);
+        Assert.Equal(TradeExecutionIntent.OpenLong, result.ExecutionIntent);
+        Assert.NotNull(result.Candidate);
+        Assert.Equal(0.005m, result.Candidate!.Quantity);
+        Assert.True(result.Candidate.RequiresReducedPositionSize);
+    }
+
+    [Fact]
     public async Task FuturesSell_MapsToOpenShort()
     {
         var service = CreateService(
@@ -83,35 +184,65 @@ public class DecisionServiceTradingModeTests
         Assert.Equal(TradeExecutionIntent.OpenShort, result.Candidate!.ExecutionIntent);
     }
 
-    private static DecisionService CreateService(TradingMode tradingMode, TradeSignal signal, Position? openPosition)
+    [Fact]
+    public async Task FuturesSell_WithHighVolatility_StillUsesReducedConfiguredQuantity()
+    {
+        var service = CreateService(
+            tradingMode: TradingMode.Futures,
+            signal: TradeSignal.Sell,
+            openPosition: null,
+            requiresReducedPositionSize: true);
+
+        var result = await service.DecideAsync(TradingSymbol.BNBUSDT, 0.01m, CancellationToken.None);
+
+        Assert.Equal(TradeSignal.Sell, result.Action);
+        Assert.NotNull(result.Candidate);
+        Assert.Equal(TradeExecutionIntent.OpenShort, result.Candidate!.ExecutionIntent);
+        Assert.Equal(0.005m, result.Candidate.Quantity);
+        Assert.True(result.Candidate.RequiresReducedPositionSize);
+    }
+
+    private static DecisionService CreateService(
+        TradingMode tradingMode,
+        TradeSignal signal,
+        Position? openPosition,
+        bool requiresReducedPositionSize = false,
+        decimal marketDataAgeSeconds = 0m,
+        int maxMarketDataAgeSeconds = 15,
+        string currentPriceSource = "RedisTicker")
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Trading:Mode"] = tradingMode.ToString(),
                 ["DecisionEngine:MinimumSignalConfidence"] = "0.1",
-                ["DecisionEngine:UseAIValidator"] = "false"
+                ["DecisionEngine:UseAIValidator"] = "false",
+                ["DecisionEngine:MaxMarketDataAgeSeconds"] = maxMarketDataAgeSeconds.ToString()
             })
             .Build();
 
         return new DecisionService(
             config,
-            new FakeMarketDataProvider(),
-            new FakeMarketConditionService(),
+            new FakeMarketDataProvider(marketDataAgeSeconds, currentPriceSource),
+            new FakeMarketConditionService(requiresReducedPositionSize),
             new FakeStrategy(signal),
             new FakeRiskEvaluator(),
             new FakeAIValidator(),
             new FakePositionRepository(openPosition),
+            new PositionManager(),
             NullLogger<DecisionService>.Instance);
     }
 
-    private sealed class FakeMarketDataProvider : IMarketDataProvider
+    private sealed class FakeMarketDataProvider(decimal marketDataAgeSeconds, string currentPriceSource) : IMarketDataProvider
     {
         public Task<MarketSnapshot?> GetLatestAsync(TradingSymbol symbol, CancellationToken cancellationToken = default)
             => Task.FromResult<MarketSnapshot?>(new MarketSnapshot
             {
                 Symbol = symbol,
                 CurrentPrice = 631m,
+                CurrentPriceSource = currentPriceSource,
+                CurrentPriceAsOfUtc = DateTime.UtcNow.AddSeconds(-(double)marketDataAgeSeconds),
+                MarketDataAgeSeconds = marketDataAgeSeconds,
                 ClosePrices = [628m, 629m, 630m, 631m],
                 HighPrices = [629m, 630m, 631m, 632m],
                 LowPrices = [627m, 628m, 629m, 630m],
@@ -119,7 +250,7 @@ public class DecisionServiceTradingModeTests
             });
     }
 
-    private sealed class FakeMarketConditionService : IMarketConditionService
+    private sealed class FakeMarketConditionService(bool requiresReducedPositionSize) : IMarketConditionService
     {
         public int RequiredPeriods => 1;
 
@@ -129,6 +260,7 @@ public class DecisionServiceTradingModeTests
                 IsValid = true,
                 AllowTrade = true,
                 MarketConditionScore = 80,
+                RequiresReducedPositionSize = requiresReducedPositionSize,
                 Reason = "ok"
             };
     }

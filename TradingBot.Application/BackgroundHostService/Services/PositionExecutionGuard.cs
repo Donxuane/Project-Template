@@ -4,18 +4,22 @@ using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
+using TradingBot.Shared.Configuration;
 
 namespace TradingBot.Application.BackgroundHostService.Services;
 
 public class PositionExecutionGuard(
     IConfiguration configuration,
     IPositionRepository positionRepository,
+    IOrderRepository orderRepository,
     ILogger<PositionExecutionGuard> logger) : IPositionExecutionGuard
 {
+    private readonly TradingRuntimeSettings _trading = RuntimeTradingConfigResolver.ResolveTrading(configuration);
+
     public async Task<PositionExecutionGuardResult> EvaluateAsync(PositionExecutionGuardRequest request, CancellationToken cancellationToken = default)
     {
-        var allowAddToPosition = configuration.GetValue<bool?>("Trading:AllowAddToPosition") ?? false;
-        var maxOpenPositionsPerSymbol = Math.Max(1, configuration.GetValue<int?>("Trading:MaxOpenPositionsPerSymbol") ?? 1);
+        var allowAddToPosition = _trading.AllowAddToPosition;
+        var maxOpenPositionsPerSymbol = _trading.MaxOpenPositionsPerSymbol;
 
         var openPosition = await positionRepository.GetOpenPositionAsync(request.Symbol, cancellationToken);
         var openQuantity = openPosition?.IsOpen == true ? Math.Max(0m, openPosition.Quantity) : 0m;
@@ -25,6 +29,20 @@ public class PositionExecutionGuard(
                           && openPosition.Quantity > 0m;
 
         var blocked = EvaluateBlockReason(request, allowAddToPosition, maxOpenPositionsPerSymbol, hasOpenLong, openQuantity);
+        if (string.IsNullOrWhiteSpace(blocked)
+            && request.TradingMode == TradingMode.Spot
+            && request.ExecutionIntent == TradeExecutionIntent.CloseLong)
+        {
+            if (openPosition is null || openPosition.Id <= 0)
+            {
+                blocked = "Execution skipped - close position id is unavailable for Spot CloseLong.";
+            }
+            else if (await orderRepository.HasInFlightClosingOrderForPositionAsync(openPosition.Id, cancellationToken))
+            {
+                blocked = "Execution skipped - close order already in-flight for position.";
+            }
+        }
+
         var allowed = string.IsNullOrWhiteSpace(blocked);
         var reason = allowed ? "Position execution guard passed." : blocked!;
 

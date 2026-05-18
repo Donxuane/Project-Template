@@ -3,6 +3,7 @@ using TradingBot.Application.BackgroundHostService;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
 using TradingBot.Domain.Interfaces.Repositories;
+using TradingBot.Domain.Models.Decision;
 using TradingBot.Domain.Models.Trading;
 using Xunit;
 
@@ -21,6 +22,9 @@ public class PositionWorkerLifecycleConsistencyTests
 
     private static readonly MethodInfo ResolvePositionForOrderMethod =
         typeof(PositionWorker).GetMethod("ResolvePositionForOrderAsync", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly MethodInfo ResolveProtectionTargetsForOrderMethod =
+        typeof(PositionWorker).GetMethod("ResolveProtectionTargetsForOrderAsync", BindingFlags.NonPublic | BindingFlags.Static)!;
 
     [Fact]
     public void ProcessedTrades_CanBeCompletedToPositionUpdated()
@@ -117,6 +121,63 @@ public class PositionWorkerLifecycleConsistencyTests
         Assert.Null(resolved);
     }
 
+    [Fact]
+    public async Task ResolveProtectionTargetsForBuyOrder_ReturnsDecisionTargets()
+    {
+        var order = new Order
+        {
+            Id = 501,
+            CorrelationId = "corr-1",
+            Symbol = TradingSymbol.BNBUSDT,
+            Side = OrderSide.BUY
+        };
+        var decisionRepository = new FakeTradeExecutionDecisionsRepository
+        {
+            NextResult = new TradeExecutionDecisions
+            {
+                StopLossPrice = 613.8m,
+                TakeProfitPrice = 632.4m
+            }
+        };
+
+        var task = (Task<(decimal? StopLossPrice, decimal? TakeProfitPrice)>)ResolveProtectionTargetsForOrderMethod.Invoke(
+            null,
+            new object[] { order, decisionRepository, CancellationToken.None })!;
+        var targets = await task;
+
+        Assert.Equal(613.8m, targets.StopLossPrice);
+        Assert.Equal(632.4m, targets.TakeProfitPrice);
+    }
+
+    [Fact]
+    public async Task ResolveProtectionTargetsForSellOrder_SkipsDecisionLookup()
+    {
+        var order = new Order
+        {
+            Id = 502,
+            CorrelationId = "corr-2",
+            Symbol = TradingSymbol.BNBUSDT,
+            Side = OrderSide.SELL
+        };
+        var decisionRepository = new FakeTradeExecutionDecisionsRepository
+        {
+            NextResult = new TradeExecutionDecisions
+            {
+                StopLossPrice = 613.8m,
+                TakeProfitPrice = 632.4m
+            }
+        };
+
+        var task = (Task<(decimal? StopLossPrice, decimal? TakeProfitPrice)>)ResolveProtectionTargetsForOrderMethod.Invoke(
+            null,
+            new object[] { order, decisionRepository, CancellationToken.None })!;
+        var targets = await task;
+
+        Assert.Null(targets.StopLossPrice);
+        Assert.Null(targets.TakeProfitPrice);
+        Assert.Equal(0, decisionRepository.LookupCalls);
+    }
+
     private static TradeExecution CreateExecution(long id, DateTime? processedAt)
     {
         return new TradeExecution
@@ -146,5 +207,23 @@ public class PositionWorkerLifecycleConsistencyTests
         public Task<IReadOnlyList<Position>> GetClosedPositionsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Position>>([]);
         public Task<bool> TryMarkPositionClosingAsync(long positionId, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task ClearPositionClosingAsync(long positionId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class FakeTradeExecutionDecisionsRepository : ITradeExecutionDesicionsRepository
+    {
+        public int LookupCalls { get; private set; }
+        public TradeExecutionDecisions? NextResult { get; set; }
+
+        public Task<long> AddDesicionAsync(TradeExecutionDecisions desicion) => Task.FromResult(1L);
+        public Task UpdateDesicionAsync(TradeExecutionDecisions desicion) => Task.CompletedTask;
+
+        public Task<TradeExecutionDecisions?> GetLatestByLocalOrderOrCorrelationAsync(
+            long localOrderId,
+            string? correlationId,
+            CancellationToken cancellationToken = default)
+        {
+            LookupCalls++;
+            return Task.FromResult(NextResult);
+        }
     }
 }

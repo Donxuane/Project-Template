@@ -13,6 +13,7 @@ using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.Trading;
 using TradingBot.Domain.Utilities;
+using TradingBot.Shared.Configuration;
 
 namespace TradingBot.Application.BackgroundHostService;
 
@@ -33,15 +34,25 @@ public class TradeMonitorWorker(
     private const bool DefaultEnableBreakEvenStop = false;
     private const decimal DefaultBreakEvenTriggerPercent = 0.5m;
     private const int DefaultCloseIdempotencyWindowSeconds = 300;
+    private const bool DefaultEnableDynamicTimeExit = false;
+    private const int DefaultFirstReviewMinutes = 10;
+    private const int DefaultCloseEarlyIfLossAfterMinutes = 12;
+    private const decimal DefaultEarlyExitLossPercent = 0.10m;
+    private const decimal DefaultNearFlatProfitPercent = 0.05m;
+    private const int DefaultExtensionMinutes = 10;
+    private const int DefaultMaxExtendedTradeDurationMinutes = 60;
+    private const decimal DefaultMinUnrealizedProfitPercentToExtend = 0.15m;
+    private const bool DefaultRequireBullishTrendToExtend = false;
     private static readonly ConcurrentDictionary<long, decimal> HighestPriceSinceEntry = new();
     private static readonly ConcurrentDictionary<long, decimal> LowestPriceSinceEntry = new();
+    private static readonly ConcurrentDictionary<long, int> ExtensionLogBuckets = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var settings = ReadSettings();
 
         logger.LogInformation(
-            "TradeMonitorWorker started. Interval={IntervalSeconds}s, MaxDuration={MaxDurationMinutes}m, Retries={Retries}, RetryDelayMs={RetryDelayMs}, StopLossExit={StopLossExit}, TakeProfitExit={TakeProfitExit}, TimeExit={TimeExit}, TrailingStop={TrailingStop}, BreakEven={BreakEven}",
+            "TradeMonitorWorker started. Interval={IntervalSeconds}s, MaxDuration={MaxDurationMinutes}m, Retries={Retries}, RetryDelayMs={RetryDelayMs}, StopLossExit={StopLossExit}, TakeProfitExit={TakeProfitExit}, TimeExit={TimeExit}, TrailingStop={TrailingStop}, BreakEven={BreakEven}, DynamicTimeExit={DynamicTimeExit}, FirstReviewMinutes={FirstReviewMinutes}, CloseEarlyLossMinutes={CloseEarlyLossMinutes}, EarlyExitLossPercent={EarlyExitLossPercent}, ExtensionMinutes={ExtensionMinutes}, MaxExtendedDurationMinutes={MaxExtendedDurationMinutes}, MinUnrealizedProfitPercentToExtend={MinUnrealizedProfitPercentToExtend}, RequireBullishTrendToExtend={RequireBullishTrendToExtend}",
             settings.IntervalSeconds,
             settings.MaxTradeDurationMinutes,
             settings.CloseOrderMaxRetries,
@@ -50,7 +61,15 @@ public class TradeMonitorWorker(
             settings.EnableTakeProfitExit,
             settings.EnableTimeExit,
             settings.EnableTrailingStop,
-            settings.EnableBreakEvenStop);
+            settings.EnableBreakEvenStop,
+            settings.EnableDynamicTimeExit,
+            settings.FirstReviewMinutes,
+            settings.CloseEarlyIfLossAfterMinutes,
+            settings.EarlyExitLossPercent,
+            settings.ExtensionMinutes,
+            settings.MaxExtendedTradeDurationMinutes,
+            settings.MinUnrealizedProfitPercentToExtend,
+            settings.RequireBullishTrendToExtend);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -118,16 +137,86 @@ public class TradeMonitorWorker(
             var openedAt = position.OpenedAt ?? position.CreatedAt;
             var duration = DateTime.UtcNow - openedAt;
             await ApplyBreakEvenStopIfNeededAsync(position, currentPrice.Value, settings, positionRepository, cancellationToken);
+            if ((settings.EnableStopLossExit && !position.StopLossPrice.HasValue) ||
+                (settings.EnableTakeProfitExit && !position.TakeProfitPrice.HasValue))
+            {
+                logger.LogWarning(
+                    "TradeMonitorWorker open position is missing protection targets while protection monitoring is enabled. PositionId={PositionId}, Symbol={Symbol}, StopLossExists={StopLossExists}, TakeProfitExists={TakeProfitExists}, StopLossExitEnabled={StopLossExitEnabled}, TakeProfitExitEnabled={TakeProfitExitEnabled}",
+                    position.Id,
+                    position.Symbol,
+                    position.StopLossPrice.HasValue,
+                    position.TakeProfitPrice.HasValue,
+                    settings.EnableStopLossExit,
+                    settings.EnableTakeProfitExit);
+            }
 
-            var reason = EvaluateExitReason(
+            var evaluation = EvaluateExitReason(
                 position,
                 currentPrice.Value,
                 duration,
                 TimeSpan.FromMinutes(settings.MaxTradeDurationMinutes),
                 settings);
 
+            if (evaluation.IsExtended)
+            {
+                var extensionBucket = Math.Max(
+                    1,
+                    (int)Math.Ceiling(
+                        Math.Max(0d, duration.TotalMinutes - settings.MaxTradeDurationMinutes)
+                        / Math.Max(1, settings.ExtensionMinutes)));
+                var previousBucket = ExtensionLogBuckets.GetOrAdd(position.Id, 0);
+                if (extensionBucket > previousBucket && ExtensionLogBuckets.TryUpdate(position.Id, extensionBucket, previousBucket))
+                {
+                    logger.LogInformation(
+                        "TradeMonitorWorker dynamic time extension applied. PositionId={PositionId}, Symbol={Symbol}, DurationMinutes={DurationMinutes}, MaxTradeDurationMinutes={MaxTradeDurationMinutes}, MaxExtendedTradeDurationMinutes={MaxExtendedTradeDurationMinutes}, ExtensionMinutes={ExtensionMinutes}, UnrealizedPnlPercent={UnrealizedPnlPercent}, MinUnrealizedProfitPercentToExtend={MinUnrealizedProfitPercentToExtend}",
+                        position.Id,
+                        position.Symbol,
+                        duration.TotalMinutes,
+                        settings.MaxTradeDurationMinutes,
+                        settings.MaxExtendedTradeDurationMinutes,
+                        settings.ExtensionMinutes,
+                        evaluation.UnrealizedPnlPercent,
+                        settings.MinUnrealizedProfitPercentToExtend);
+                }
+            }
+
+            var reason = evaluation.Reason;
             if (reason is null)
                 continue;
+
+            if (evaluation.IsEarlyLossExit)
+            {
+                logger.LogInformation(
+                    "TradeMonitorWorker dynamic early stale/loss exit triggered. PositionId={PositionId}, Symbol={Symbol}, DurationMinutes={DurationMinutes}, CloseEarlyIfLossAfterMinutes={CloseEarlyIfLossAfterMinutes}, UnrealizedPnlPercent={UnrealizedPnlPercent}, EarlyExitLossPercent={EarlyExitLossPercent}",
+                    position.Id,
+                    position.Symbol,
+                    duration.TotalMinutes,
+                    settings.CloseEarlyIfLossAfterMinutes,
+                    evaluation.UnrealizedPnlPercent,
+                    settings.EarlyExitLossPercent);
+            }
+            else if (evaluation.IsHardCapExit)
+            {
+                logger.LogInformation(
+                    "TradeMonitorWorker hard max duration reached. PositionId={PositionId}, Symbol={Symbol}, DurationMinutes={DurationMinutes}, MaxExtendedTradeDurationMinutes={MaxExtendedTradeDurationMinutes}, UnrealizedPnlPercent={UnrealizedPnlPercent}",
+                    position.Id,
+                    position.Symbol,
+                    duration.TotalMinutes,
+                    settings.MaxExtendedTradeDurationMinutes,
+                    evaluation.UnrealizedPnlPercent);
+            }
+            else if (reason == PositionExitReason.Time)
+            {
+                logger.LogInformation(
+                    "TradeMonitorWorker time exit triggered. PositionId={PositionId}, Symbol={Symbol}, DurationMinutes={DurationMinutes}, MaxTradeDurationMinutes={MaxTradeDurationMinutes}, UnrealizedPnlPercent={UnrealizedPnlPercent}, MinUnrealizedProfitPercentToExtend={MinUnrealizedProfitPercentToExtend}, NearFlatProfitPercent={NearFlatProfitPercent}",
+                    position.Id,
+                    position.Symbol,
+                    duration.TotalMinutes,
+                    settings.MaxTradeDurationMinutes,
+                    evaluation.UnrealizedPnlPercent,
+                    settings.MinUnrealizedProfitPercentToExtend,
+                    settings.NearFlatProfitPercent);
+            }
 
             var closeSide = position.Side == OrderSide.BUY ? OrderSide.SELL : OrderSide.BUY;
             var closeIntent = position.Side == OrderSide.BUY
@@ -240,6 +329,7 @@ public class TradeMonitorWorker(
                     quantity);
                 HighestPriceSinceEntry.TryRemove(position.Id, out _);
                 LowestPriceSinceEntry.TryRemove(position.Id, out _);
+                ExtensionLogBuckets.TryRemove(position.Id, out _);
             }
             catch
             {
@@ -249,7 +339,7 @@ public class TradeMonitorWorker(
         }
     }
 
-    private PositionExitReason? EvaluateExitReason(
+    private ExitEvaluationResult EvaluateExitReason(
         Position position,
         decimal currentPrice,
         TimeSpan duration,
@@ -261,11 +351,11 @@ public class TradeMonitorWorker(
             if (position.Side == OrderSide.BUY)
             {
                 if (position.StopLossPrice.HasValue && currentPrice <= position.StopLossPrice.Value)
-                    return PositionExitReason.StopLoss;
+                    return ExitEvaluationResult.WithReason(PositionExitReason.StopLoss);
             }
             else if (position.StopLossPrice.HasValue && currentPrice >= position.StopLossPrice.Value)
             {
-                return PositionExitReason.StopLoss;
+                return ExitEvaluationResult.WithReason(PositionExitReason.StopLoss);
             }
         }
 
@@ -274,21 +364,80 @@ public class TradeMonitorWorker(
             if (position.Side == OrderSide.BUY)
             {
                 if (position.TakeProfitPrice.HasValue && currentPrice >= position.TakeProfitPrice.Value)
-                    return PositionExitReason.TakeProfit;
+                    return ExitEvaluationResult.WithReason(PositionExitReason.TakeProfit);
             }
             else if (position.TakeProfitPrice.HasValue && currentPrice <= position.TakeProfitPrice.Value)
             {
-                return PositionExitReason.TakeProfit;
+                return ExitEvaluationResult.WithReason(PositionExitReason.TakeProfit);
             }
         }
 
         if (settings.EnableTrailingStop && IsTrailingStopTriggered(position, currentPrice, settings.TrailingStopPercent))
-            return PositionExitReason.TrailingStop;
+            return ExitEvaluationResult.WithReason(PositionExitReason.TrailingStop);
 
-        if (settings.EnableTimeExit && duration > maxTradeDuration)
-            return PositionExitReason.Time;
+        if (!settings.EnableTimeExit)
+            return ExitEvaluationResult.None;
 
-        return null;
+        if (settings.EnableDynamicTimeExit &&
+            position.Side == OrderSide.BUY &&
+            position.AveragePrice > 0m &&
+            duration >= TimeSpan.FromMinutes(settings.FirstReviewMinutes))
+        {
+            var unrealizedPnlPercent = CalculateUnrealizedPnlPercent(position.AveragePrice, currentPrice);
+            var closeEarlyLossDuration = TimeSpan.FromMinutes(settings.CloseEarlyIfLossAfterMinutes);
+            var maxExtendedDuration = TimeSpan.FromMinutes(settings.MaxExtendedTradeDurationMinutes);
+            var canApplyEarlyLossRule = duration >= closeEarlyLossDuration && settings.EarlyExitLossPercent > 0m;
+            if (canApplyEarlyLossRule && unrealizedPnlPercent <= -settings.EarlyExitLossPercent)
+            {
+                return ExitEvaluationResult.WithReason(
+                    PositionExitReason.RiskExit,
+                    unrealizedPnlPercent,
+                    isEarlyLossExit: true);
+            }
+
+            if (duration >= maxExtendedDuration)
+            {
+                return ExitEvaluationResult.WithReason(
+                    PositionExitReason.Time,
+                    unrealizedPnlPercent,
+                    isHardCapExit: true);
+            }
+
+            if (duration >= maxTradeDuration)
+            {
+                if (unrealizedPnlPercent < settings.MinUnrealizedProfitPercentToExtend)
+                {
+                    return ExitEvaluationResult.WithReason(
+                        PositionExitReason.Time,
+                        unrealizedPnlPercent);
+                }
+
+                if (settings.RequireBullishTrendToExtend)
+                {
+                    // TODO: Confirm bullish trend/momentum before extending dynamic time exit.
+                    return ExitEvaluationResult.WithReason(
+                        PositionExitReason.Time,
+                        unrealizedPnlPercent);
+                }
+
+                return ExitEvaluationResult.Extended(unrealizedPnlPercent);
+            }
+
+            return ExitEvaluationResult.NoneWithUnrealized(unrealizedPnlPercent);
+        }
+
+        if (duration > maxTradeDuration)
+            return ExitEvaluationResult.WithReason(PositionExitReason.Time);
+
+        return ExitEvaluationResult.None;
+    }
+
+    private static decimal CalculateUnrealizedPnlPercent(decimal averagePrice, decimal currentPrice)
+    {
+        if (averagePrice <= 0m)
+            return 0m;
+
+        return ((currentPrice - averagePrice) / averagePrice) * 100m;
     }
 
     private bool IsTrailingStopTriggered(Position position, decimal currentPrice, decimal trailingStopPercent)
@@ -437,16 +586,18 @@ public class TradeMonitorWorker(
             PositionExitReason.TakeProfit => CloseReason.TakeProfit,
             PositionExitReason.Time => CloseReason.MaxDuration,
             PositionExitReason.TrailingStop => CloseReason.RiskExit,
+            PositionExitReason.RiskExit => CloseReason.RiskExit,
             _ => CloseReason.Unknown
         };
     }
 
     private TradeMonitoringSettings ReadSettings()
     {
-        var intervalSeconds = Math.Max(1, configuration.GetValue<int?>("TradeMonitoring:IntervalSeconds") ?? DefaultIntervalSeconds);
-        var maxTradeDurationMinutes = Math.Max(1, configuration.GetValue<int?>("TradeMonitoring:MaxTradeDurationMinutes") ?? DefaultMaxTradeDurationMinutes);
-        var closeOrderMaxRetries = Math.Max(1, configuration.GetValue<int?>("TradeMonitoring:CloseOrderMaxRetries") ?? DefaultCloseOrderMaxRetries);
-        var closeOrderRetryDelayMs = Math.Max(100, configuration.GetValue<int?>("TradeMonitoring:CloseOrderRetryDelayMs") ?? DefaultCloseOrderRetryDelayMs);
+        var resolved = RuntimeTradingConfigResolver.ResolveTradeMonitoring(configuration);
+        var intervalSeconds = resolved.IntervalSeconds;
+        var maxTradeDurationMinutes = resolved.MaxTradeDurationMinutes;
+        var closeOrderMaxRetries = resolved.CloseOrderMaxRetries;
+        var closeOrderRetryDelayMs = resolved.CloseOrderRetryDelayMs;
         var enableTimeExit = configuration.GetValue<bool?>("TradeMonitoring:EnableTimeExit") ?? DefaultEnableTimeExit;
         var enableStopLossExit = configuration.GetValue<bool?>("TradeMonitoring:EnableStopLossExit") ?? DefaultEnableStopLossExit;
         var enableTakeProfitExit = configuration.GetValue<bool?>("TradeMonitoring:EnableTakeProfitExit") ?? DefaultEnableTakeProfitExit;
@@ -457,6 +608,18 @@ public class TradeMonitorWorker(
         var breakEvenTriggerPercentRaw = configuration.GetValue<decimal?>("TradeMonitoring:BreakEvenTriggerPercent") ?? DefaultBreakEvenTriggerPercent;
         var breakEvenTriggerPercent = Math.Clamp(breakEvenTriggerPercentRaw, 0m, 50m);
         var closeIdempotencyWindowSeconds = Math.Max(10, configuration.GetValue<int?>("TradeMonitoring:CloseIdempotencyWindowSeconds") ?? DefaultCloseIdempotencyWindowSeconds);
+        var enableDynamicTimeExit = resolved.EnableDynamicTimeExit;
+        var firstReviewMinutes = resolved.FirstReviewMinutes;
+        var closeEarlyIfLossAfterMinutes = resolved.CloseEarlyIfLossAfterMinutes;
+        var earlyExitLossPercent = resolved.EarlyExitLossPercent;
+        var nearFlatProfitPercentRaw = configuration.GetValue<decimal?>("TradeMonitoring:NearFlatProfitPercent") ?? DefaultNearFlatProfitPercent;
+        var nearFlatProfitPercent = Math.Clamp(nearFlatProfitPercentRaw, 0m, 50m);
+        var extensionMinutes = resolved.ExtensionMinutes;
+        var maxExtendedTradeDurationMinutes = Math.Max(
+            maxTradeDurationMinutes,
+            resolved.MaxExtendedTradeDurationMinutes);
+        var minUnrealizedProfitPercentToExtend = resolved.MinUnrealizedProfitPercentToExtend;
+        var requireBullishTrendToExtend = configuration.GetValue<bool?>("TradeMonitoring:RequireBullishTrendToExtend") ?? DefaultRequireBullishTrendToExtend;
 
         return new TradeMonitoringSettings
         {
@@ -471,7 +634,16 @@ public class TradeMonitorWorker(
             TrailingStopPercent = trailingStopPercent,
             EnableBreakEvenStop = enableBreakEvenStop,
             BreakEvenTriggerPercent = breakEvenTriggerPercent,
-            CloseIdempotencyWindowSeconds = closeIdempotencyWindowSeconds
+            CloseIdempotencyWindowSeconds = closeIdempotencyWindowSeconds,
+            EnableDynamicTimeExit = enableDynamicTimeExit,
+            FirstReviewMinutes = firstReviewMinutes,
+            CloseEarlyIfLossAfterMinutes = closeEarlyIfLossAfterMinutes,
+            EarlyExitLossPercent = earlyExitLossPercent,
+            NearFlatProfitPercent = nearFlatProfitPercent,
+            ExtensionMinutes = extensionMinutes,
+            MaxExtendedTradeDurationMinutes = maxExtendedTradeDurationMinutes,
+            MinUnrealizedProfitPercentToExtend = minUnrealizedProfitPercentToExtend,
+            RequireBullishTrendToExtend = requireBullishTrendToExtend
         };
     }
 
@@ -489,5 +661,51 @@ public class TradeMonitorWorker(
         public decimal TrailingStopPercent { get; init; }
         public bool EnableBreakEvenStop { get; init; }
         public decimal BreakEvenTriggerPercent { get; init; }
+        public bool EnableDynamicTimeExit { get; init; }
+        public int FirstReviewMinutes { get; init; }
+        public int CloseEarlyIfLossAfterMinutes { get; init; }
+        public decimal EarlyExitLossPercent { get; init; }
+        public decimal NearFlatProfitPercent { get; init; }
+        public int ExtensionMinutes { get; init; }
+        public int MaxExtendedTradeDurationMinutes { get; init; }
+        public decimal MinUnrealizedProfitPercentToExtend { get; init; }
+        public bool RequireBullishTrendToExtend { get; init; }
+    }
+
+    private sealed class ExitEvaluationResult
+    {
+        public PositionExitReason? Reason { get; init; }
+        public decimal? UnrealizedPnlPercent { get; init; }
+        public bool IsExtended { get; init; }
+        public bool IsEarlyLossExit { get; init; }
+        public bool IsHardCapExit { get; init; }
+
+        public static ExitEvaluationResult None { get; } = new();
+
+        public static ExitEvaluationResult WithReason(
+            PositionExitReason reason,
+            decimal? unrealizedPnlPercent = null,
+            bool isEarlyLossExit = false,
+            bool isHardCapExit = false)
+            => new()
+            {
+                Reason = reason,
+                UnrealizedPnlPercent = unrealizedPnlPercent,
+                IsEarlyLossExit = isEarlyLossExit,
+                IsHardCapExit = isHardCapExit
+            };
+
+        public static ExitEvaluationResult Extended(decimal? unrealizedPnlPercent)
+            => new()
+            {
+                IsExtended = true,
+                UnrealizedPnlPercent = unrealizedPnlPercent
+            };
+
+        public static ExitEvaluationResult NoneWithUnrealized(decimal? unrealizedPnlPercent)
+            => new()
+            {
+                UnrealizedPnlPercent = unrealizedPnlPercent
+            };
     }
 }

@@ -17,6 +17,7 @@ using TradingBot.Domain.Interfaces.Services.Cache;
 using TradingBot.Domain.Interfaces.Services.Decision;
 using TradingBot.Domain.Models.Binance;
 using TradingBot.Domain.Models.Decision;
+using TradingBot.Domain.Models.MarketData;
 using TradingBot.Domain.Models.Trading;
 using TradingBot.Domain.Models.TradingEndpoints;
 using TradingBot.Shared.Shared.Models;
@@ -296,6 +297,125 @@ public class DecisionPipelineGuardsTests
         Assert.Null(decisionRepository.LastUpdated.LocalOrderId);
     }
 
+    [Fact]
+    public async Task SpotCloseLong_DuplicateInFlightCloseOrder_IsSkippedEndToEnd()
+    {
+        var decisionRepository = new FakeTradeExecutionDecisionsRepository();
+        var executionService = new FakeTradeExecutionService();
+        var confidenceGate = new FakeConfidenceGate(new ConfidenceGateResult
+        {
+            IsAllowed = true,
+            Reason = "Confidence gate passed.",
+            StrategyName = "MovingAverageCrossover",
+            Symbol = TradingSymbol.BNBUSDT,
+            Action = TradeSignal.Sell,
+            ExecutionIntent = TradeExecutionIntent.CloseLong,
+            Confidence = 0.45m,
+            MinConfidence = 0.45m
+        });
+        var guardConfiguration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Trading:AllowAddToPosition"] = "false",
+                ["Trading:MaxOpenPositionsPerSymbol"] = "1"
+            })
+            .Build();
+        var positionExecutionGuard = new PositionExecutionGuard(
+            guardConfiguration,
+            new GuardPositionRepository(new Position
+            {
+                Id = 64,
+                Symbol = TradingSymbol.BNBUSDT,
+                Side = OrderSide.BUY,
+                Quantity = 0.15m,
+                IsOpen = true
+            }),
+            new GuardOrderRepository(hasInFlightCloseOrder: true),
+            NullLogger<PositionExecutionGuard>.Instance);
+
+        await InvokeProcessSymbolAsync(
+            decisionResult: BuildDecision(TradeSignal.Sell, TradingMode.Spot, TradeExecutionIntent.CloseLong),
+            cooldownResult: new CooldownCheckResult { IsInCooldown = false, RemainingSeconds = 0 },
+            idempotencyAllowed: true,
+            decisionRepository: decisionRepository,
+            executionService: executionService,
+            positionExecutionGuard: positionExecutionGuard,
+            confidenceGate: confidenceGate);
+
+        Assert.Equal(0, executionService.ExecuteCalls);
+        Assert.NotNull(decisionRepository.LastUpdated);
+        Assert.Equal(DecisionStatus.Skipped, decisionRepository.LastUpdated!.DecisionStatus);
+        Assert.Equal("Execution skipped - close order already in-flight for position.", decisionRepository.LastUpdated.ExecutionError);
+        Assert.Null(decisionRepository.LastUpdated.MinConfidence);
+        Assert.Equal(0, confidenceGate.EvaluateCalls);
+        Assert.Null(decisionRepository.LastUpdated.LocalOrderId);
+        Assert.Null(decisionRepository.LastUpdated.ExchangeOrderId);
+    }
+
+    [Fact]
+    public async Task SpotCloseLong_UsesAndPersistsEffectiveExitMinConfidence045()
+    {
+        var decisionRepository = new FakeTradeExecutionDecisionsRepository();
+        var executionService = new FakeTradeExecutionService();
+
+        await InvokeProcessSymbolAsync(
+            decisionResult: BuildDecision(TradeSignal.Sell, TradingMode.Spot, TradeExecutionIntent.CloseLong),
+            cooldownResult: new CooldownCheckResult { IsInCooldown = false, RemainingSeconds = 0 },
+            idempotencyAllowed: true,
+            decisionRepository: decisionRepository,
+            executionService: executionService,
+            confidenceGate: new FakeConfidenceGate(new ConfidenceGateResult
+            {
+                IsAllowed = true,
+                Reason = "Confidence gate passed.",
+                StrategyName = "MovingAverageCrossover",
+                Symbol = TradingSymbol.BNBUSDT,
+                Action = TradeSignal.Sell,
+                ExecutionIntent = TradeExecutionIntent.CloseLong,
+                Confidence = 0.45m,
+                MinConfidence = 0.45m
+            }));
+
+        Assert.Equal(1, executionService.ExecuteCalls);
+        Assert.NotNull(decisionRepository.LastUpdated);
+        Assert.Equal(0.45m, decisionRepository.LastUpdated!.MinConfidence);
+    }
+
+    [Fact]
+    public async Task SpotCloseLongExit_WithAllowedExitConfidence_StillHonorsCooldownGuard()
+    {
+        var decisionRepository = new FakeTradeExecutionDecisionsRepository();
+        var executionService = new FakeTradeExecutionService();
+
+        await InvokeProcessSymbolAsync(
+            decisionResult: BuildDecision(TradeSignal.Sell, TradingMode.Spot, TradeExecutionIntent.CloseLong),
+            cooldownResult: new CooldownCheckResult
+            {
+                IsInCooldown = true,
+                RemainingSeconds = 15,
+                LastTradeAtUtc = DateTime.UtcNow.AddSeconds(-5)
+            },
+            idempotencyAllowed: true,
+            decisionRepository: decisionRepository,
+            executionService: executionService,
+            confidenceGate: new FakeConfidenceGate(new ConfidenceGateResult
+            {
+                IsAllowed = true,
+                Reason = "Confidence gate passed.",
+                StrategyName = "MovingAverageCrossover",
+                Symbol = TradingSymbol.BNBUSDT,
+                Action = TradeSignal.Sell,
+                ExecutionIntent = TradeExecutionIntent.CloseLong,
+                Confidence = 0.50m,
+                MinConfidence = 0.50m
+            }));
+
+        Assert.Equal(0, executionService.ExecuteCalls);
+        Assert.NotNull(decisionRepository.LastUpdated);
+        Assert.Equal(GuardStage.Cooldown, decisionRepository.LastUpdated!.GuardStage);
+        Assert.Contains("cooldown", decisionRepository.LastUpdated.ExecutionError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static async Task InvokeProcessSymbolAsync(
         DecisionResult decisionResult,
         CooldownCheckResult cooldownResult,
@@ -368,6 +488,7 @@ public class DecisionPipelineGuardsTests
         var task = (Task)processSymbol!.Invoke(worker, new object[]
         {
             TradingSymbol.BNBUSDT,
+            0.01m,
             settings!,
             "test-correlation-id",
             CancellationToken.None,
@@ -489,6 +610,12 @@ public class DecisionPipelineGuardsTests
             LastUpdated = desicion;
             return Task.CompletedTask;
         }
+
+        public Task<TradeExecutionDecisions?> GetLatestByLocalOrderOrCorrelationAsync(
+            long localOrderId,
+            string? correlationId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<TradeExecutionDecisions?>(null);
     }
 
     private sealed class FakeRiskManagementService : IRiskManagementService
@@ -590,6 +717,14 @@ public class DecisionPipelineGuardsTests
         public Task<decimal?> GetCachedPriceAsync(TradingSymbol symbol, CancellationToken cancellationToken = default)
             => Task.FromResult<decimal?>(price);
 
+        public Task<PriceSnapshot?> GetCachedPriceSnapshotAsync(TradingSymbol symbol, CancellationToken cancellationToken = default)
+            => Task.FromResult<PriceSnapshot?>(new PriceSnapshot
+            {
+                Price = price,
+                AsOfUtc = DateTime.UtcNow,
+                Source = "RedisTicker"
+            });
+
         public Task SetCachedPriceAsync(TradingSymbol symbol, decimal price, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
     }
@@ -622,6 +757,8 @@ public class DecisionPipelineGuardsTests
         public Task<IReadOnlyList<Order>> GetOpenOrdersAsync(TradingSymbol? symbol = null, int? limit = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
         public Task<IReadOnlyList<Order>> GetFilledOrdersAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
         public Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusAsync(ProcessingStatus processingStatus, int? limit = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
+        public Task<int> GetInFlightOpeningOrderCountAsync(CancellationToken cancellationToken = default) => Task.FromResult(0);
+        public Task<bool> HasInFlightClosingOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task<bool> HasActiveCloseOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task<IReadOnlyList<Order>> GetOpenOrdersForWorkerAsync(IDbTransaction transaction, TradingSymbol? symbol, int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
         public Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusForWorkerAsync(IDbTransaction transaction, ProcessingStatus processingStatus, int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
@@ -641,8 +778,13 @@ public class DecisionPipelineGuardsTests
 
     private sealed class FakeConfidenceGate(ConfidenceGateResult result) : IConfidenceGate
     {
+        public int EvaluateCalls { get; private set; }
+
         public Task<ConfidenceGateResult> EvaluateAsync(ConfidenceGateRequest request, CancellationToken cancellationToken = default)
-            => Task.FromResult(result);
+        {
+            EvaluateCalls++;
+            return Task.FromResult(result);
+        }
     }
 
     private sealed class FakeTradeExecutionRepository : ITradeExecutionRepository
@@ -664,5 +806,32 @@ public class DecisionPipelineGuardsTests
         public Task<IReadOnlyList<Position>> GetClosedPositionsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Position>>([]);
         public Task<bool> TryMarkPositionClosingAsync(long positionId, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task ClearPositionClosingAsync(long positionId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class GuardPositionRepository(Position? openPosition) : IPositionRepository
+    {
+        public Task<long> UpsertAsync(Position position, CancellationToken cancellationToken = default) => Task.FromResult(position.Id == 0 ? 1L : position.Id);
+        public Task<Position?> GetByIdAsync(long id, CancellationToken cancellationToken = default) => Task.FromResult(openPosition);
+        public Task<Position?> GetOpenPositionAsync(TradingSymbol symbol, CancellationToken cancellationToken = default) => Task.FromResult(openPosition);
+        public Task<IReadOnlyList<Position>> GetOpenPositionsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Position>>(openPosition is null ? [] : [openPosition]);
+        public Task<IReadOnlyList<Position>> GetClosedPositionsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Position>>([]);
+        public Task<bool> TryMarkPositionClosingAsync(long positionId, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task ClearPositionClosingAsync(long positionId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class GuardOrderRepository(bool hasInFlightCloseOrder) : IOrderRepository
+    {
+        public Task<long> InsertAsync(Order order, CancellationToken cancellationToken = default) => Task.FromResult(order.Id);
+        public Task UpdateAsync(Order order, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<Order?> GetByIdAsync(long id, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
+        public Task<Order?> GetByExchangeOrderIdAsync(long exchangeOrderId, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
+        public Task<IReadOnlyList<Order>> GetOpenOrdersAsync(TradingSymbol? symbol = null, int? limit = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
+        public Task<IReadOnlyList<Order>> GetFilledOrdersAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
+        public Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusAsync(ProcessingStatus processingStatus, int? limit = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
+        public Task<int> GetInFlightOpeningOrderCountAsync(CancellationToken cancellationToken = default) => Task.FromResult(0);
+        public Task<bool> HasInFlightClosingOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default) => Task.FromResult(hasInFlightCloseOrder);
+        public Task<bool> HasActiveCloseOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default) => Task.FromResult(hasInFlightCloseOrder);
+        public Task<IReadOnlyList<Order>> GetOpenOrdersForWorkerAsync(IDbTransaction transaction, TradingSymbol? symbol, int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
+        public Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusForWorkerAsync(IDbTransaction transaction, ProcessingStatus processingStatus, int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Order>>([]);
     }
 }

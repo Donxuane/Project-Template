@@ -12,14 +12,13 @@ public sealed class TradingHealthDiagnosticsRepository(IDbConnection connection)
     public async Task<TradingRuntimeHealthMetrics> CollectMetricsAsync(CancellationToken cancellationToken = default)
     {
         const string sql = """
-            WITH active_close_orders AS (
+            WITH close_orders AS (
                 SELECT o.id, o.parent_position_id
                 FROM orders o
                 WHERE o.parent_position_id IS NOT NULL
                   AND o.side = @SellSide
                   AND o.close_reason <> @CloseReasonNone
-                  AND o.status = ANY(@ActiveStatuses)
-                  AND o.processing_status <> ALL(@InactiveProcessingStatuses)
+                  AND o.status <> ALL(@TerminalFailedStatuses)
             ),
             latest_bnb AS (
                 SELECT COALESCE(updated_at, created_at) AS latest_at
@@ -92,7 +91,7 @@ public sealed class TradingHealthDiagnosticsRepository(IDbConnection connection)
                     SELECT COUNT(*)
                     FROM (
                         SELECT parent_position_id
-                        FROM active_close_orders
+                        FROM close_orders
                         GROUP BY parent_position_id
                         HAVING COUNT(*) > 1
                     ) duplicates
@@ -103,7 +102,7 @@ public sealed class TradingHealthDiagnosticsRepository(IDbConnection connection)
                     WHERE p.is_closing = true
                       AND NOT EXISTS (
                           SELECT 1
-                          FROM active_close_orders a
+                          FROM close_orders a
                           WHERE a.parent_position_id = p.id
                       )
                 ) AS ClosingPositionsWithoutActiveCloseOrder,
@@ -114,7 +113,7 @@ public sealed class TradingHealthDiagnosticsRepository(IDbConnection connection)
                       AND p.is_closing = false
                       AND EXISTS (
                           SELECT 1
-                          FROM active_close_orders a
+                          FROM close_orders a
                           WHERE a.parent_position_id = p.id
                       )
                 ) AS OpenPositionsWithActiveCloseOrderButNotClosing,
@@ -134,17 +133,12 @@ public sealed class TradingHealthDiagnosticsRepository(IDbConnection connection)
                 {
                     SellSide = (int)OrderSide.SELL,
                     CloseReasonNone = (int)CloseReason.None,
-                    ActiveStatuses = new[]
+                    TerminalFailedStatuses = new[]
                     {
-                        (int)OrderStatuses.NEW,
-                        (int)OrderStatuses.PARTIALLY_FILLED,
-                        (int)OrderStatuses.FILLED
-                    },
-                    InactiveProcessingStatuses = new[]
-                    {
-                        (int)ProcessingStatus.PositionUpdated,
-                        (int)ProcessingStatus.PositionUpdateFailed,
-                        (int)ProcessingStatus.Completed
+                        (int)OrderStatuses.CANCELED,
+                        (int)OrderStatuses.REJECTED,
+                        (int)OrderStatuses.EXPIRED,
+                        (int)OrderStatuses.EXPIRED_IN_MATCH
                     },
                     PositionUpdated = (int)ProcessingStatus.PositionUpdated,
                     TradesSynced = (int)ProcessingStatus.TradesSynced,

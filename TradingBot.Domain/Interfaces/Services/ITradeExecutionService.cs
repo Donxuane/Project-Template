@@ -18,6 +18,7 @@ public sealed class TradeExecutionRequest
     public TradingMode TradingMode { get; init; } = TradingMode.Spot;
     public TradeSignal RawSignal { get; init; } = TradeSignal.Hold;
     public TradeExecutionIntent ExecutionIntent { get; init; } = TradeExecutionIntent.None;
+    public decimal? CandidatePrice { get; init; }
 }
 
 public sealed class TradeExecutionResult

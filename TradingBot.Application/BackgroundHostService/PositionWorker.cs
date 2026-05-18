@@ -71,6 +71,7 @@ public class PositionWorker(
         var connection = scope.ServiceProvider.GetRequiredService<IDbConnection>();
         var orderRepository = scope.ServiceProvider.GetRequiredService<IOrderRepository>();
         var tradeExecutionRepository = scope.ServiceProvider.GetRequiredService<ITradeExecutionRepository>();
+        var tradeExecutionDesicionsRepository = scope.ServiceProvider.GetRequiredService<ITradeExecutionDesicionsRepository>();
         var positionRepository = scope.ServiceProvider.GetRequiredService<IPositionRepository>();
         var orderStatusService = scope.ServiceProvider.GetRequiredService<IOrderStatusService>();
         var accountingService = scope.ServiceProvider.GetRequiredService<IPositionAccountingService>();
@@ -200,8 +201,17 @@ public class PositionWorker(
                 var oldQuantity = currentPosition?.Quantity ?? 0m;
                 var oldAveragePrice = currentPosition?.AveragePrice ?? 0m;
                 var oldRealizedPnl = currentPosition?.RealizedPnl ?? 0m;
+                var (stopLossPrice, takeProfitPrice) = await ResolveProtectionTargetsForOrderAsync(
+                    order,
+                    tradeExecutionDesicionsRepository,
+                    cancellationToken);
 
-                var accounting = accountingService.ApplyTrades(currentPosition, order, trades);
+                var accounting = accountingService.ApplyTrades(
+                    currentPosition,
+                    order,
+                    trades,
+                    stopLossPrice,
+                    takeProfitPrice);
                 if (accounting.ProcessedTradeCount == 0)
                 {
                     var parentPosition = await ResolveParentPositionAsync(order, positionRepository, cancellationToken);
@@ -425,6 +435,25 @@ public class PositionWorker(
     private static bool AreAllExecutionsProcessed(IReadOnlyList<TradeExecution> trades)
     {
         return trades.Count > 0 && trades.All(t => t.PositionProcessedAt is not null);
+    }
+
+    private static async Task<(decimal? StopLossPrice, decimal? TakeProfitPrice)> ResolveProtectionTargetsForOrderAsync(
+        Order order,
+        ITradeExecutionDesicionsRepository tradeExecutionDesicionsRepository,
+        CancellationToken cancellationToken)
+    {
+        if (order.Side != TradingBot.Domain.Enums.Binance.OrderSide.BUY)
+            return (null, null);
+
+        if (order.Id <= 0 && string.IsNullOrWhiteSpace(order.CorrelationId))
+            return (null, null);
+
+        var decision = await tradeExecutionDesicionsRepository.GetLatestByLocalOrderOrCorrelationAsync(
+            order.Id,
+            order.CorrelationId,
+            cancellationToken);
+
+        return (decision?.StopLossPrice, decision?.TakeProfitPrice);
     }
 
     private static async Task<Position?> ResolveParentPositionAsync(

@@ -1,9 +1,16 @@
 using TradingBot.Domain.Enums.Binance;
+using TradingBot.Domain.Enums.Endpoints;
+using TradingBot.Domain.Interfaces.Services;
+using TradingBot.Domain.Interfaces.Services.Cache;
 using TradingBot.Domain.Models.Binance;
+using TradingBot.Domain.Models.GeneralApis;
+using TradingBot.Domain.Models;
 using TradingBot.Domain.Models.TradingEndpoints;
 using TradingBot.Domain.Utilities;
 using TradingBot.Percistance.Services.Main;
 using Xunit;
+using Microsoft.Extensions.Logging.Abstractions;
+using TradingBot.Shared.Shared.Models;
 
 namespace TradingBot.Application.Tests;
 
@@ -133,6 +140,62 @@ public class BinanceOrderNormalizationTests
         Assert.Contains("price", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void MarketOrder_PrefersMarketLotSize_WhenAvailable()
+    {
+        var filters = new BinanceSymbolFilters
+        {
+            Symbol = "BTCUSDT",
+            StepSize = 0.01m,
+            MinQty = 0.01m,
+            MaxQty = 10m,
+            MarketStepSize = 0.1m,
+            MarketMinQty = 0.1m,
+            MarketMaxQty = 10m,
+            MinNotional = 5m
+        };
+        var request = new NewOrderRequest
+        {
+            Symbol = "BTCUSDT",
+            Side = OrderSide.BUY,
+            Type = OrderTypes.MARKET,
+            Quantity = 0.15m,
+            Timestamp = 123
+        };
+
+        var result = BinanceOrderNormalizationService.NormalizeNewOrder(request, filters, marketPrice: 100m);
+
+        Assert.Equal(0.1m, result.Request.Quantity);
+    }
+
+    [Fact]
+    public void MarketSellCloseLong_StillAppliesQuantityNormalization()
+    {
+        var filters = new BinanceSymbolFilters
+        {
+            Symbol = "BTCUSDT",
+            StepSize = 0.01m,
+            MinQty = 0.01m,
+            MaxQty = 10m,
+            MarketStepSize = 0.1m,
+            MarketMinQty = 0.1m,
+            MarketMaxQty = 10m,
+            MinNotional = 5m
+        };
+        var request = new NewOrderRequest
+        {
+            Symbol = "BTCUSDT",
+            Side = OrderSide.SELL,
+            Type = OrderTypes.MARKET,
+            Quantity = 0.19m,
+            Timestamp = 123
+        };
+
+        var result = BinanceOrderNormalizationService.NormalizeNewOrder(request, filters, marketPrice: 100m);
+
+        Assert.Equal(0.1m, result.Request.Quantity);
+    }
+
     private static NewOrderRequest CreateLimitOrder(decimal quantity, decimal price)
     {
         return new NewOrderRequest
@@ -145,6 +208,128 @@ public class BinanceOrderNormalizationTests
             TimeInForce = TimeInForce.GTC,
             Timestamp = 123
         };
+    }
+}
+
+public class BinanceOrderNormalizationServiceTests
+{
+    [Fact]
+    public async Task GetSymbolFilters_FallsBackToMinNotional_WhenNotionalFilterMissing()
+    {
+        var exchangeInfo = new ExchangeInfoResponse
+        {
+            Timezone = "UTC",
+            ServerTime = 0,
+            RateLimits = [],
+            ExchangeFilters = [],
+            Sors = [],
+            Symbols =
+            [
+                new SymbolInfo
+                {
+                    Symbol = "SOLUSDT",
+                    Status = "TRADING",
+                    BaseAsset = "SOL",
+                    QuoteAsset = "USDT",
+                    BaseAssetPrecision = 8,
+                    QuoteAssetPrecision = 8,
+                    BaseCommissionPrecision = 8,
+                    QuoteCommissionPrecision = 8,
+                    OrderTypes = [ "LIMIT", "MARKET" ],
+                    IcebergAllowed = true,
+                    OcoAllowed = true,
+                    OtoAllowed = true,
+                    QuoteOrderQtyMarketAllowed = true,
+                    AllowTrailingStop = false,
+                    CancelReplaceAllowed = true,
+                    AmendAllowed = false,
+                    PegInstructionsAllowed = false,
+                    IsSpotTradingAllowed = true,
+                    IsMarginTradingAllowed = false,
+                    Permissions = [ "SPOT" ],
+                    PermissionSets = [],
+                    DefaultSelfTradePreventionMode = "NONE",
+                    AllowedSelfTradePreventionModes = [ "NONE" ],
+                    Filters =
+                    [
+                        new LotSizeFilter
+                        {
+                            FilterType = "LOT_SIZE",
+                            MinQty = "0.01",
+                            MaxQty = "1000",
+                            StepSize = "0.01"
+                        },
+                        new NotionalFilter
+                        {
+                            FilterType = "MIN_NOTIONAL",
+                            MinNotional = "5",
+                            ApplyMinToMarket = true,
+                            MaxNotional = string.Empty,
+                            ApplyMaxToMarket = false,
+                            AvgPriceMins = 5
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var service = new BinanceOrderNormalizationService(
+            new FakeBinanceClientService(exchangeInfo),
+            new FakeBinanceEndpointsService(),
+            new FakeRedisCacheService(),
+            NullLogger<BinanceOrderNormalizationService>.Instance);
+
+        var filters = await service.GetSymbolFiltersAsync("SOLUSDT");
+
+        Assert.Equal(5m, filters.MinNotional);
+    }
+
+    private sealed class FakeBinanceClientService(ExchangeInfoResponse exchangeInfo) : IBinanceClientService
+    {
+        public Task<TResponse> Call<TResponse, TRequest>(TRequest? request, Endpoint endpoint, bool enableSignature)
+            => Task.FromResult((TResponse)(object)exchangeInfo);
+    }
+
+    private sealed class FakeBinanceEndpointsService : IBinanceEndpointsService
+    {
+        private static readonly Endpoint ExchangeEndpoint = new()
+        {
+            API = "/api/v3/exchangeInfo",
+            Type = "GET"
+        };
+
+        public Endpoint GetEndpoint(Account account) => ExchangeEndpoint;
+        public Endpoint GetEndpoint(GeneralApis general) => ExchangeEndpoint;
+        public Endpoint GetEndpoint(MarketData marketData) => ExchangeEndpoint;
+        public Endpoint GetEndpoint(TradingBot.Domain.Enums.Endpoints.Trading trading) => ExchangeEndpoint;
+    }
+
+    private sealed class FakeRedisCacheService : IRedisCacheService
+    {
+        private readonly Dictionary<string, object?> _cache = new(StringComparer.Ordinal);
+
+        public Task<TRequest?> SetCacheValue<TRequest>(string key, TRequest value)
+        {
+            _cache[key] = value;
+            return Task.FromResult<TRequest?>(value);
+        }
+
+        public Task<TResponse?> GetCacheValue<TResponse>(string key)
+        {
+            if (_cache.TryGetValue(key, out var value) && value is TResponse typed)
+                return Task.FromResult<TResponse?>(typed);
+
+            return Task.FromResult<TResponse?>(default);
+        }
+
+        public Task RemoveCacheValue(string key)
+        {
+            _cache.Remove(key);
+            return Task.CompletedTask;
+        }
+
+        public Task<List<object?>?> GetAllCachedData(List<string> keys)
+            => Task.FromResult<List<object?>?>(keys.Select(key => _cache.TryGetValue(key, out var value) ? value : null).ToList());
     }
 }
 
