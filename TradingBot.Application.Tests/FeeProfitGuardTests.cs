@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TradingBot.Application.BackgroundHostService.Services;
 using TradingBot.Domain.Enums;
@@ -158,7 +159,61 @@ public class FeeProfitGuardTests
         Assert.Contains("not supported", result.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static FeeProfitGuard CreateGuard(bool useFeeGuard = true, Position? openPosition = null)
+    [Fact]
+    public async Task SpotOpenLong_LogsStructuredDiagnostics_ForAllowedAndBlocked()
+    {
+        var logger = new CapturingLogger<FeeProfitGuard>();
+        var guard = CreateGuard(logger: logger);
+
+        _ = await guard.EvaluateAsync(new FeeProfitGuardRequest
+        {
+            Symbol = TradingSymbol.BNBUSDT,
+            TradingMode = TradingMode.Spot,
+            RawSignal = TradeSignal.Buy,
+            ExecutionIntent = TradeExecutionIntent.OpenLong,
+            Side = OrderSide.BUY,
+            Quantity = 0.01m,
+            EntryPrice = 100m,
+            TargetPrice = 101m,
+            TargetSource = "RiskManagementService.TakeProfitPrice",
+            Caller = "DecisionWorker"
+        });
+
+        _ = await guard.EvaluateAsync(new FeeProfitGuardRequest
+        {
+            Symbol = TradingSymbol.BNBUSDT,
+            TradingMode = TradingMode.Spot,
+            RawSignal = TradeSignal.Buy,
+            ExecutionIntent = TradeExecutionIntent.OpenLong,
+            Side = OrderSide.BUY,
+            Quantity = 0.01m,
+            EntryPrice = 100m,
+            TargetPrice = 100.2m,
+            TargetSource = "RiskManagementService.TakeProfitPrice",
+            Caller = "DecisionWorker"
+        });
+
+        var openLongLogs = logger.Entries
+            .Where(x => x.Message.Contains("Spot OpenLong evaluation", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        Assert.True(openLongLogs.Length >= 2);
+        Assert.Contains(openLongLogs, x => x.Get<bool>("Allowed"));
+        Assert.Contains(openLongLogs, x => !x.Get<bool>("Allowed"));
+
+        var sample = openLongLogs[0];
+        Assert.True(sample.Values.ContainsKey("TargetSource"));
+        Assert.True(sample.Values.ContainsKey("GrossExpectedMovePercent"));
+        Assert.True(sample.Values.ContainsKey("FeeRatePercent"));
+        Assert.True(sample.Values.ContainsKey("FeeRateSource"));
+        Assert.True(sample.Values.ContainsKey("EstimatedRoundTripCostPercent"));
+        Assert.True(sample.Values.ContainsKey("MinExpectedMovePercent"));
+        Assert.True(sample.Values.ContainsKey("MinNetProfitPercent"));
+        Assert.True(sample.Values.ContainsKey("ExpectedNetProfitPercent"));
+        Assert.True(sample.Values.ContainsKey("RejectionReason"));
+        Assert.True(sample.Values.ContainsKey("Caller"));
+    }
+
+    private static FeeProfitGuard CreateGuard(bool useFeeGuard = true, Position? openPosition = null, ILogger<FeeProfitGuard>? logger = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -175,7 +230,76 @@ public class FeeProfitGuardTests
             config,
             new FakePositionRepository(openPosition),
             new FakePriceCacheService(100m),
-            NullLogger<FeeProfitGuard>.Instance);
+            new FakeSpotCommissionRateResolver(0.1m, "ConfigFallback"),
+            new NoOpExpectedMoveBlockObservability(),
+            logger ?? NullLogger<FeeProfitGuard>.Instance);
+    }
+
+    private sealed class NoOpExpectedMoveBlockObservability : IFeeProfitGuardExpectedMoveBlockObservability
+    {
+        public void RecordExpectedMoveBlock(FeeProfitGuardExpectedMoveBlockObservation observation)
+        {
+        }
+
+        public void FlushAndLog(decimal currentMinExpectedMovePercent, decimal currentMinNetProfitPercent, TimeSpan reportingWindow)
+        {
+        }
+    }
+
+    private sealed class FakeSpotCommissionRateResolver(decimal feeRatePercent, string source) : ISpotCommissionRateResolver
+    {
+        public Task<SpotCommissionRateResolution> ResolveFeeRatePercentAsync(TradingSymbol symbol, CancellationToken cancellationToken = default)
+            => Task.FromResult(new SpotCommissionRateResolution
+            {
+                FeeRatePercent = feeRatePercent,
+                FeeRateSource = source
+            });
+    }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<LogEntry> Entries { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NoopScope.Instance;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            if (state is IEnumerable<KeyValuePair<string, object?>> structured)
+            {
+                foreach (var kv in structured)
+                    values[kv.Key] = kv.Value;
+            }
+
+            Entries.Add(new LogEntry(message, values));
+        }
+    }
+
+    private sealed record LogEntry(string Message, IReadOnlyDictionary<string, object?> Values)
+    {
+        public T Get<T>(string key)
+        {
+            var value = Values[key];
+            if (value is T typed)
+                return typed;
+
+            return (T)Convert.ChangeType(value!, typeof(T));
+        }
+    }
+
+    private sealed class NoopScope : IDisposable
+    {
+        public static readonly NoopScope Instance = new();
+        public void Dispose()
+        {
+        }
     }
 
     private sealed class FakePositionRepository(Position? openPosition) : IPositionRepository

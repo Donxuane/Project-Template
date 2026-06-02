@@ -14,7 +14,14 @@ public static class RuntimeTradingConfigResolver
         return new TradingRuntimeSettings(
             mode,
             configuration.GetValue<bool?>("Trading:AllowAddToPosition") ?? false,
-            Math.Max(1, configuration.GetValue<int?>("Trading:MaxOpenPositionsPerSymbol") ?? 1));
+            Math.Max(1, configuration.GetValue<int?>("Trading:MaxOpenPositionsPerSymbol") ?? 1),
+            configuration.GetValue<bool?>("Trading:RequireStrategyExpectedTargetForSpotOpenLong") ?? false,
+            configuration.GetValue<bool?>("Trading:UseBalanceBasedSizing") ?? false,
+            Math.Clamp(configuration.GetValue<decimal?>("Trading:QuoteAllocationPercentPerTrade") ?? 2.0m, 0.01m, 100m),
+            Math.Max(0m, configuration.GetValue<decimal?>("Trading:MaxQuotePerTrade") ?? 50m),
+            Math.Max(0m, configuration.GetValue<decimal?>("Trading:MinQuotePerTrade") ?? 10m),
+            Math.Max(0m, configuration.GetValue<decimal?>("Trading:ReservedQuoteBalance") ?? 20m),
+            configuration.GetValue<string>("Trading:BalanceAsset") ?? "USDT");
     }
 
     public static DecisionEngineRuntimeSettings ResolveDecisionEngine(IConfiguration configuration)
@@ -47,6 +54,9 @@ public static class RuntimeTradingConfigResolver
             Math.Max(0, configuration.GetValue<int?>("DecisionEngine:TradeCooldownSeconds") ?? 60),
             Math.Max(10, configuration.GetValue<int?>("DecisionEngine:IdempotencyWindowSeconds") ?? 120),
             Math.Max(1, configuration.GetValue<int?>("DecisionEngine:MaxMarketDataAgeSeconds") ?? 15),
+            configuration.GetValue<bool?>("DecisionEngine:EnableSymbolRanking") ?? false,
+            Math.Max(1, configuration.GetValue<int?>("DecisionEngine:MaxSymbolsToTradePerCycle") ?? 1),
+            Math.Max(0m, configuration.GetValue<decimal?>("DecisionEngine:MinOpportunityScore") ?? 0m),
             configuration.GetSection("DecisionEngine:Symbols").Get<string[]>() ?? [],
             configuration.GetValue<string>("DecisionEngine:Symbol") ?? "BTCUSDT",
             symbolQuantities,
@@ -78,7 +88,39 @@ public static class RuntimeTradingConfigResolver
             Math.Max(0m, configuration.GetValue<decimal?>($"{prefix}:BreakoutHoldBufferPercent") ?? 0m),
             configuration.GetValue<bool?>($"{prefix}:RequireCloseAboveBreakoutThreshold") ?? true,
             configuration.GetValue<bool?>($"{prefix}:RequireShortSlopeStillPositiveOnConfirmation") ?? true,
-            configuration.GetValue<bool?>($"{prefix}:RequireNoImmediateBearishCandleAfterBreakout") ?? false);
+            configuration.GetValue<bool?>($"{prefix}:RequireNoImmediateBearishCandleAfterBreakout") ?? false,
+            configuration.GetValue<bool?>($"{prefix}:EnableNormalTrendFallbackWhenLowVolBreakoutFails") ?? false,
+            configuration.GetValue<bool?>($"{prefix}:EnableNetAwareMomentumExit") ?? false,
+            Math.Max(0, configuration.GetValue<int?>($"{prefix}:MomentumExitMinTradeAgeMinutes") ?? 5),
+            Math.Min(0m, configuration.GetValue<decimal?>($"{prefix}:MomentumExitAllowIfUnrealizedLossPercentBelow") ?? -0.20m),
+            configuration.GetValue<bool?>($"{prefix}:MomentumExitRequireBearishConfirmationWhenFeeNegative") ?? true,
+            Math.Max(0m, configuration.GetValue<decimal?>($"{prefix}:MomentumExitMinNetProfitPercent") ?? 0.10m),
+            configuration.GetValue<bool?>($"{prefix}:EnableNormalTrendBullishPersistenceFilter") ?? false,
+            Math.Max(1, configuration.GetValue<int?>($"{prefix}:NormalTrendMinBullishPersistenceCandles") ?? 2),
+            configuration.GetValue<bool?>($"{prefix}:EnableNormalTrendCloseAboveRecentHighFilter") ?? false,
+            configuration.GetValue<bool?>($"{prefix}:EnableNormalTrendMinDistanceToInvalidationFilter") ?? false,
+            Math.Max(0m, configuration.GetValue<decimal?>($"{prefix}:NormalTrendMinDistanceToInvalidationPercent") ?? 0.15m),
+            configuration.GetValue<bool?>($"{prefix}:EnableNormalTrendRejectPreviousBearishCandleFilter") ?? false,
+            configuration.GetValue<bool?>($"{prefix}:EnableNormalTrendRewardRiskFilter") ?? false,
+            Math.Max(0m, configuration.GetValue<decimal?>($"{prefix}:NormalTrendMinExpectedRewardRisk") ?? 0.80m),
+            configuration.GetValue<bool?>($"{prefix}:EnableNormalTrendNearRecentHighRejection") ?? false,
+            Math.Max(0m, configuration.GetValue<decimal?>($"{prefix}:NormalTrendNearRecentHighRequiresRewardRisk") ?? 1.20m),
+            configuration.GetValue<decimal?>($"{prefix}:NormalTrendNearRecentHighRequiresTrendStrengthPercent") is { } nearHighTrendStrength
+                ? Math.Max(0m, nearHighTrendStrength)
+                : null,
+            Math.Max(0m, configuration.GetValue<decimal?>($"{prefix}:NormalTrendNearRecentHighPercent") ?? 0.15m),
+            Math.Max(0m, configuration.GetValue<decimal?>($"{prefix}:NormalTrendAtrExtensionMultiplier") ?? 0.35m),
+            Math.Max(0m, configuration.GetValue<decimal?>($"{prefix}:NormalTrendStructureExtensionMultiplier") ?? 0.35m),
+            Math.Max(2, configuration.GetValue<int?>($"{prefix}:NormalTrendExpectedTargetLookbackCandles")
+                ?? Math.Max(2, configuration.GetValue<int?>($"{prefix}:BreakoutLookbackCandles") ?? 10)),
+            configuration.GetValue<bool?>($"{prefix}:NormalTrendUseMinAtrStructureExtension") ?? true,
+            configuration.GetValue<bool?>($"{prefix}:UseConfirmedClosedCandlesForEntryQuality") ?? false,
+            configuration.GetValue<bool?>($"{prefix}:UseConfirmedClosedCandlesForLowVolBreakout") ?? false,
+            configuration.GetValue<bool?>($"{prefix}:EnableNormalTrendPullbackContinuationOverride") ?? false,
+            Math.Max(0m, configuration.GetValue<decimal?>($"{prefix}:NormalTrendPullbackMinExpectedRewardRisk") ?? 0.80m),
+            configuration.GetValue<bool?>($"{prefix}:NormalTrendPullbackRequireCloseAboveShortAndLongMa") ?? true,
+            configuration.GetValue<bool?>($"{prefix}:NormalTrendPullbackRequirePositiveShortSlope") ?? true,
+            configuration.GetValue<bool?>($"{prefix}:NormalTrendPullbackRejectPreviousBearishCandle") ?? true);
     }
 
     public static TradeMonitoringRuntimeSettings ResolveTradeMonitoring(IConfiguration configuration)
@@ -201,7 +243,14 @@ public static class RuntimeTradingConfigResolver
 public sealed record TradingRuntimeSettings(
     string Mode,
     bool AllowAddToPosition,
-    int MaxOpenPositionsPerSymbol);
+    int MaxOpenPositionsPerSymbol,
+    bool RequireStrategyExpectedTargetForSpotOpenLong,
+    bool UseBalanceBasedSizing,
+    decimal QuoteAllocationPercentPerTrade,
+    decimal MaxQuotePerTrade,
+    decimal MinQuotePerTrade,
+    decimal ReservedQuoteBalance,
+    string BalanceAsset);
 
 public sealed record DecisionEngineRuntimeSettings(
     decimal? MinConfidence,
@@ -213,6 +262,9 @@ public sealed record DecisionEngineRuntimeSettings(
     int TradeCooldownSeconds,
     int IdempotencyWindowSeconds,
     int MaxMarketDataAgeSeconds,
+    bool EnableSymbolRanking,
+    int MaxSymbolsToTradePerCycle,
+    decimal MinOpportunityScore,
     IReadOnlyList<string> Symbols,
     string Symbol,
     IReadOnlyDictionary<string, decimal> SymbolQuantities,
@@ -244,7 +296,36 @@ public sealed record MovingAverageStrategyRuntimeSettings(
     decimal BreakoutHoldBufferPercent,
     bool RequireCloseAboveBreakoutThreshold,
     bool RequireShortSlopeStillPositiveOnConfirmation,
-    bool RequireNoImmediateBearishCandleAfterBreakout);
+    bool RequireNoImmediateBearishCandleAfterBreakout,
+    bool EnableNormalTrendFallbackWhenLowVolBreakoutFails,
+    bool EnableNetAwareMomentumExit,
+    int MomentumExitMinTradeAgeMinutes,
+    decimal MomentumExitAllowIfUnrealizedLossPercentBelow,
+    bool MomentumExitRequireBearishConfirmationWhenFeeNegative,
+    decimal MomentumExitMinNetProfitPercent,
+    bool EnableNormalTrendBullishPersistenceFilter,
+    int NormalTrendMinBullishPersistenceCandles,
+    bool EnableNormalTrendCloseAboveRecentHighFilter,
+    bool EnableNormalTrendMinDistanceToInvalidationFilter,
+    decimal NormalTrendMinDistanceToInvalidationPercent,
+    bool EnableNormalTrendRejectPreviousBearishCandleFilter,
+    bool EnableNormalTrendRewardRiskFilter,
+    decimal NormalTrendMinExpectedRewardRisk,
+    bool EnableNormalTrendNearRecentHighRejection,
+    decimal NormalTrendNearRecentHighRequiresRewardRisk,
+    decimal? NormalTrendNearRecentHighRequiresTrendStrengthPercent,
+    decimal NormalTrendNearRecentHighPercent,
+    decimal NormalTrendAtrExtensionMultiplier,
+    decimal NormalTrendStructureExtensionMultiplier,
+    int NormalTrendExpectedTargetLookbackCandles,
+    bool NormalTrendUseMinAtrStructureExtension,
+    bool UseConfirmedClosedCandlesForEntryQuality,
+    bool UseConfirmedClosedCandlesForLowVolBreakout,
+    bool EnableNormalTrendPullbackContinuationOverride,
+    decimal NormalTrendPullbackMinExpectedRewardRisk,
+    bool NormalTrendPullbackRequireCloseAboveShortAndLongMa,
+    bool NormalTrendPullbackRequirePositiveShortSlope,
+    bool NormalTrendPullbackRejectPreviousBearishCandle);
 
 public sealed record TradeMonitoringRuntimeSettings(
     int IntervalSeconds,

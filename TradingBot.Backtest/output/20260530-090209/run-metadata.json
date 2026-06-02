@@ -1,0 +1,13 @@
+{
+  "startedAtUtc": "2026-05-30T09:02:09.7718839Z",
+  "completedAtUtc": "2026-05-30T09:02:14.8622458Z",
+  "DataDirectory": "TradingBot.Backtest/data",
+  "OutputDirectory": "C:\\Users\\vakht\\OneDrive\\Desktop\\ProjectTemplate\\TradingBot.Backtest\\output\\20260530-090209",
+  "BootstrapMissingData": true,
+  "BootstrapLimit": 1000,
+  "FeeRatePercent": 0.1,
+  "EstimatedSpreadPercent": 0.05,
+  "SlippagePercent": 0,
+  "profileCount": 8,
+  "tradeCount": 304
+}

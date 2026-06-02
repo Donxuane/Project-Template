@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using TradingBot.Application.BackgroundHostService.Services;
@@ -11,6 +12,7 @@ using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Interfaces.Services.Decision;
 using TradingBot.Domain.Models.Decision;
+using TradingBot.Domain.Models.Trading;
 using TradingBot.Shared.Configuration;
 
 namespace TradingBot.Application.BackgroundHostService;
@@ -43,8 +45,8 @@ public class DecisionWorker(
         }
 
         logger.LogInformation(
-            "DecisionWorker started. Symbols={Symbols}, Quantity={Quantity}, Interval={IntervalSeconds}s, MinExecutionConfidence={MinExecutionConfidence}, TradeCooldownSeconds={TradeCooldownSeconds}, IdempotencyWindowSeconds={IdempotencyWindowSeconds}, ExecutionEnabled={ExecutionEnabled}, UseMarketOrders={UseMarketOrders}",
-            string.Join(",", settings.Symbols), settings.Quantity, settings.IntervalSeconds, settings.MinExecutionConfidence, settings.TradeCooldownSeconds, settings.IdempotencyWindowSeconds, settings.ExecutionEnabled, settings.UseMarketOrders);
+            "DecisionWorker started. Symbols={Symbols}, Quantity={Quantity}, Interval={IntervalSeconds}s, MinExecutionConfidence={MinExecutionConfidence}, TradeCooldownSeconds={TradeCooldownSeconds}, IdempotencyWindowSeconds={IdempotencyWindowSeconds}, ExecutionEnabled={ExecutionEnabled}, UseMarketOrders={UseMarketOrders}, EnableSymbolRanking={EnableSymbolRanking}, MaxSymbolsToTradePerCycle={MaxSymbolsToTradePerCycle}, MinOpportunityScore={MinOpportunityScore}, GlobalMaxOpenPositions={GlobalMaxOpenPositions}",
+            string.Join(",", settings.Symbols), settings.Quantity, settings.IntervalSeconds, settings.MinExecutionConfidence, settings.TradeCooldownSeconds, settings.IdempotencyWindowSeconds, settings.ExecutionEnabled, settings.UseMarketOrders, settings.EnableSymbolRanking, settings.MaxSymbolsToTradePerCycle, settings.MinOpportunityScore, settings.GlobalMaxOpenPositions);
 
         using (var warmupScope = scopeFactory.CreateScope())
         {
@@ -57,6 +59,11 @@ public class DecisionWorker(
             try
             {
                 var correlationId = Guid.NewGuid().ToString("N");
+                var cycleStartUtc = DateTime.UtcNow;
+                var cycleTimer = Stopwatch.StartNew();
+                var selectedSymbols = new List<TradingSymbol>();
+                var currentOpenPositions = 0;
+                var availableOpenSlots = 0;
                 using (var scope = scopeFactory.CreateScope())
                 {
                     var tradeDecisionService = scope.ServiceProvider.GetRequiredService<TradeDecisionService>();
@@ -66,21 +73,12 @@ public class DecisionWorker(
                     var tradeIdempotencyService = scope.ServiceProvider.GetRequiredService<ITradeIdempotencyService>();
                     var tradeExecutionDesicionsRepository = scope.ServiceProvider.GetRequiredService<ITradeExecutionDesicionsRepository>();
                     var positionExecutionGuard = scope.ServiceProvider.GetRequiredService<IPositionExecutionGuard>();
-                    var feeProfitGuard = scope.ServiceProvider.GetRequiredService<IFeeProfitGuard>();
                     var confidenceGate = scope.ServiceProvider.GetRequiredService<IConfidenceGate>();
-                    foreach (var symbol in settings.Symbols)
+                    var positionRepository = scope.ServiceProvider.GetRequiredService<IPositionRepository>();
+                    var spotPositionSizingService = scope.ServiceProvider.GetRequiredService<ISpotPositionSizingService>();
+                    if (settings.EnableSymbolRanking && settings.Symbols.Count > 1)
                     {
-                        var requestedQuantity = ResolveQuantityForSymbol(symbol, settings);
-                        var hasSymbolOverride = settings.SymbolQuantities.ContainsKey(symbol);
-                        logger.LogInformation(
-                            "DecisionWorker resolved symbol quantity: Symbol={Symbol}, RequestedQuantity={RequestedQuantity}, HasSymbolOverride={HasSymbolOverride}, GlobalQuantity={GlobalQuantity}",
-                            symbol,
-                            requestedQuantity,
-                            hasSymbolOverride,
-                            settings.Quantity);
-                        await ProcessSymbolAsync(
-                            symbol,
-                            requestedQuantity,
+                        var rankingSummary = await ProcessRankedSymbolsAsync(
                             settings,
                             correlationId,
                             stoppingToken,
@@ -91,10 +89,121 @@ public class DecisionWorker(
                             tradeIdempotencyService,
                             tradeExecutionDesicionsRepository,
                             positionExecutionGuard,
-                            feeProfitGuard,
-                            confidenceGate);
+                            confidenceGate,
+                            positionRepository,
+                            spotPositionSizingService);
+                        selectedSymbols = rankingSummary.SelectedSymbols.ToList();
+                        currentOpenPositions = rankingSummary.CurrentOpenPositions;
+                        availableOpenSlots = rankingSummary.AvailableOpenSlots;
+                    }
+                    else
+                    {
+                        var openPositions = await positionRepository.GetOpenPositionsAsync(stoppingToken);
+                        currentOpenPositions = openPositions.Count(p => p.IsOpen);
+                        availableOpenSlots = Math.Max(0, settings.GlobalMaxOpenPositions - currentOpenPositions);
+                        selectedSymbols = settings.Symbols.ToList();
+
+                        foreach (var symbol in settings.Symbols)
+                        {
+                            var symbolEvalStartUtc = DateTime.UtcNow;
+                            var symbolTimer = Stopwatch.StartNew();
+                            var quantityTimer = Stopwatch.StartNew();
+                            var sizingResult = await ResolveOpenLongQuantityAsync(
+                                symbol,
+                                settings,
+                                spotPositionSizingService,
+                                stoppingToken);
+                            quantityTimer.Stop();
+                            if (!sizingResult.IsSuccess)
+                            {
+                                logger.LogWarning(
+                                    "DecisionWorker skipped symbol due to position sizing rejection: Symbol={Symbol}, Reason={Reason}, QuantitySource={QuantitySource}",
+                                    symbol,
+                                    sizingResult.Reason,
+                                    sizingResult.QuantitySource);
+                                symbolTimer.Stop();
+                                logger.LogInformation(
+                                    "DecisionWorker symbol evaluation timing: CorrelationId={CorrelationId}, Symbol={Symbol}, SymbolEvalStartUtc={SymbolEvalStartUtc}, SymbolEvalEndUtc={SymbolEvalEndUtc}, SymbolElapsedMs={SymbolElapsedMs}, QuantityResolveMs={QuantityResolveMs}, DecisionServiceMs={DecisionServiceMs}, StrategyMs={StrategyMs}, DecisionPersistMs={DecisionPersistMs}, FinalAction={FinalAction}, FinalReason={FinalReason}",
+                                    correlationId,
+                                    symbol,
+                                    symbolEvalStartUtc,
+                                    DateTime.UtcNow,
+                                    symbolTimer.ElapsedMilliseconds,
+                                    quantityTimer.ElapsedMilliseconds,
+                                    0L,
+                                    null,
+                                    null,
+                                    TradeSignal.Hold,
+                                    sizingResult.Reason ?? "Position sizing rejected.");
+                                continue;
+                            }
+
+                            var requestedQuantity = sizingResult.Quantity;
+                            var hasSymbolOverride = sizingResult.QuantitySource == SpotQuantitySource.SymbolOverride;
+                            logger.LogInformation(
+                                "DecisionWorker resolved symbol quantity: Symbol={Symbol}, RequestedQuantity={RequestedQuantity}, HasSymbolOverride={HasSymbolOverride}, GlobalQuantity={GlobalQuantity}, QuantitySource={QuantitySource}, AvailableQuoteBalance={AvailableQuoteBalance}, ReservedQuoteBalance={ReservedQuoteBalance}, UsableQuoteBalance={UsableQuoteBalance}, QuoteAllocationPercentPerTrade={QuoteAllocationPercentPerTrade}, DesiredQuoteAmount={DesiredQuoteAmount}, CappedQuoteAmount={CappedQuoteAmount}, CurrentPrice={CurrentPrice}, RawQuantity={RawQuantity}, NormalizedQuantity={NormalizedQuantity}, FinalNotional={FinalNotional}, MinNotional={MinNotional}",
+                                symbol,
+                                requestedQuantity,
+                                hasSymbolOverride,
+                                settings.Quantity,
+                                sizingResult.QuantitySource,
+                                sizingResult.AvailableQuoteBalance,
+                                sizingResult.ReservedQuoteBalance,
+                                sizingResult.UsableQuoteBalance,
+                                sizingResult.QuoteAllocationPercentPerTrade,
+                                sizingResult.DesiredQuoteAmount,
+                                sizingResult.CappedQuoteAmount,
+                                sizingResult.CurrentPrice,
+                                sizingResult.RawQuantity,
+                                sizingResult.NormalizedQuantity,
+                                sizingResult.FinalNotional,
+                                sizingResult.MinNotional);
+                            var symbolMetrics = await ProcessSymbolAsync(
+                                symbol,
+                                requestedQuantity,
+                                settings,
+                                correlationId,
+                                stoppingToken,
+                                tradeDecisionService,
+                                riskManagementService,
+                                tradeExecutionService,
+                                tradeCooldownService,
+                                tradeIdempotencyService,
+                                tradeExecutionDesicionsRepository,
+                                positionExecutionGuard,
+                                confidenceGate,
+                                spotPositionSizingService);
+                            symbolTimer.Stop();
+                            logger.LogInformation(
+                                "DecisionWorker symbol evaluation timing: CorrelationId={CorrelationId}, Symbol={Symbol}, SymbolEvalStartUtc={SymbolEvalStartUtc}, SymbolEvalEndUtc={SymbolEvalEndUtc}, SymbolElapsedMs={SymbolElapsedMs}, QuantityResolveMs={QuantityResolveMs}, DecisionServiceMs={DecisionServiceMs}, StrategyMs={StrategyMs}, DecisionPersistMs={DecisionPersistMs}, FinalAction={FinalAction}, FinalReason={FinalReason}",
+                                correlationId,
+                                symbol,
+                                symbolEvalStartUtc,
+                                DateTime.UtcNow,
+                                symbolTimer.ElapsedMilliseconds,
+                                quantityTimer.ElapsedMilliseconds,
+                                symbolMetrics.DecisionServiceMs,
+                                symbolMetrics.StrategyMs,
+                                symbolMetrics.DecisionPersistMs,
+                                symbolMetrics.FinalAction,
+                                symbolMetrics.FinalReason);
+                        }
                     }
                 }
+                cycleTimer.Stop();
+                var cycleEndUtc = DateTime.UtcNow;
+                logger.LogInformation(
+                    "DecisionWorker cycle timing: CorrelationId={CorrelationId}, CycleStartUtc={CycleStartUtc}, CycleEndUtc={CycleEndUtc}, CycleElapsedMs={CycleElapsedMs}, ConfiguredIntervalSeconds={ConfiguredIntervalSeconds}, SymbolsCount={SymbolsCount}, RankingEnabled={RankingEnabled}, SelectedSymbols={SelectedSymbols}, CurrentOpenPositions={CurrentOpenPositions}, AvailableOpenSlots={AvailableOpenSlots}",
+                    correlationId,
+                    cycleStartUtc,
+                    cycleEndUtc,
+                    cycleTimer.ElapsedMilliseconds,
+                    settings.IntervalSeconds,
+                    settings.Symbols.Count,
+                    settings.EnableSymbolRanking,
+                    string.Join(",", selectedSymbols),
+                    currentOpenPositions,
+                    availableOpenSlots);
 
             }
             catch (OperationCanceledException)
@@ -112,7 +221,7 @@ public class DecisionWorker(
         logger.LogInformation("DecisionWorker stopped.");
     }
 
-    private async Task ProcessSymbolAsync(
+    private async Task<SymbolProcessingMetrics> ProcessSymbolAsync(
         TradingSymbol symbol,
         decimal requestedQuantity,
         DecisionWorkerSettings settings,
@@ -125,19 +234,39 @@ public class DecisionWorker(
         ITradeIdempotencyService tradeIdempotencyService,
         ITradeExecutionDesicionsRepository tradeExecutionDesicionsRepository,
         IPositionExecutionGuard positionExecutionGuard,
-        IFeeProfitGuard feeProfitGuard,
-        IConfidenceGate confidenceGate
+        IConfidenceGate confidenceGate,
+        ISpotPositionSizingService spotPositionSizingService,
+        DecisionResult? precomputedDecision = null
         )
     {
+        var decisionServiceMs = 0L;
+        decimal? strategyMs = null;
+        long? decisionPersistMs = null;
         try
         {
-            var decision = await tradeDecisionService.MakeDecision(symbol, requestedQuantity, stoppingToken);
+            DecisionResult decision;
+            if (precomputedDecision is null)
+            {
+                var decisionTimer = Stopwatch.StartNew();
+                decision = await tradeDecisionService.MakeDecision(symbol, requestedQuantity, stoppingToken);
+                decisionTimer.Stop();
+                decisionServiceMs = decisionTimer.ElapsedMilliseconds;
+            }
+            else
+            {
+                decision = precomputedDecision;
+            }
+
+            strategyMs = null;
             var side = decision.Candidate?.Side ?? InferSideFromAction(decision.Action);
             var rawSignal = decision.RawSignal == default && decision.Action != TradeSignal.Hold
                 ? decision.Action
                 : decision.RawSignal;
             var tradingMode = decision.Candidate?.TradingMode ?? decision.TradingMode;
             var executionIntent = decision.Candidate?.ExecutionIntent ?? decision.ExecutionIntent;
+            var isSpotOpenLong = decision.Action == TradeSignal.Buy
+                                 && tradingMode == TradingMode.Spot
+                                 && executionIntent == TradeExecutionIntent.OpenLong;
             var strategyName = string.IsNullOrWhiteSpace(decision.StrategyName) ? "Unknown" : decision.StrategyName;
             var executionQuantity = decision.Candidate?.Quantity ?? requestedQuantity;
             var price = decision.Candidate?.Price ?? 0m;
@@ -177,18 +306,58 @@ public class DecisionWorker(
                 GuardStage = GuardStage.None,
                 Confidence = decision.Confidence,
                 Reason = decision.Reason,
-                MinConfidence = null
+                MinConfidence = null,
+                ExpectedMovePercent = isSpotOpenLong ? decision.Candidate?.ExpectedMovePercent : null,
+                ExpectedTargetPrice = isSpotOpenLong ? decision.Candidate?.ExpectedTargetPrice : null,
+                ExpectedTargetSource = isSpotOpenLong ? decision.Candidate?.ExpectedTargetSource : null,
+                TrendConfidenceScore = isSpotOpenLong ? decision.Candidate?.TrendConfidenceScore ?? decision.TrendConfidenceScore : null,
+                MarketConditionScore = isSpotOpenLong ? decision.Candidate?.MarketConditionScore ?? decision.MarketConditionScore : null,
+                VolatilityRegime = isSpotOpenLong ? decision.Candidate?.VolatilityRegime : null,
+                RequiresReducedPositionSize = isSpotOpenLong ? decision.Candidate?.RequiresReducedPositionSize : null,
+                ConsecutiveBullishTrendCandles = isSpotOpenLong ? decision.Candidate?.ConsecutiveBullishTrendCandles : null,
+                CurrentCloseAboveRecentHigh = isSpotOpenLong ? decision.Candidate?.CurrentCloseAboveRecentHigh : null,
+                DistanceToInvalidationPercent = isSpotOpenLong ? decision.Candidate?.DistanceToInvalidationPercent : null,
+                PreviousCandleBearish = isSpotOpenLong ? decision.Candidate?.PreviousCandleBearish : null,
+                EntryNearRecentHigh = isSpotOpenLong ? decision.Candidate?.EntryNearRecentHigh : null,
+                ShortMaSlopePercent = isSpotOpenLong ? decision.Candidate?.ShortMaSlopePercent : null,
+                TrendStrengthPercent = isSpotOpenLong ? decision.Candidate?.TrendStrengthPercent : null,
+                ProjectionMode = isSpotOpenLong ? decision.Candidate?.ProjectionMode : null,
+                ProjectedExtension = isSpotOpenLong ? decision.Candidate?.ProjectedExtension : null
             };
 
 
-            var executionId = await tradeExecutionDesicionsRepository.AddDesicionAsync(executionDesicion);
+            var persistTimer = Stopwatch.StartNew();
+            _ = await tradeExecutionDesicionsRepository.AddDesicionAsync(executionDesicion);
+            persistTimer.Stop();
+            decisionPersistMs = persistTimer.ElapsedMilliseconds;
+
+            SymbolProcessingMetrics TerminalMetrics(string finalStage, string finalReason)
+            {
+                logger.LogInformation(
+                    "DecisionWorker terminal decision: CorrelationId={CorrelationId}, Symbol={Symbol}, FinalStage={FinalStage}, FinalReason={FinalReason}, Action={Action}, ExecutionIntent={ExecutionIntent}, DecisionOutcome={DecisionOutcome}, GuardStage={GuardStage}",
+                    correlationId,
+                    symbol,
+                    finalStage,
+                    finalReason,
+                    decision.Action,
+                    executionIntent,
+                    executionDesicion.DecisionStatus,
+                    executionDesicion.GuardStage);
+
+                return new SymbolProcessingMetrics(
+                    decisionServiceMs,
+                    strategyMs,
+                    decisionPersistMs,
+                    decision.Action,
+                    finalReason);
+            }
             
             if (decision.Action == TradeSignal.Hold)
             {
                 executionDesicion.ExecutionError = "Execution skipped - hold action.";
                 executionDesicion.DecisionStatus = DecisionStatus.Skipped;
                 await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
-                return;
+                return TerminalMetrics("Hold", executionDesicion.ExecutionError);
             }
 
             if (decision.Action != TradeSignal.Buy && decision.Action != TradeSignal.Sell)
@@ -196,7 +365,7 @@ public class DecisionWorker(
                 executionDesicion.ExecutionError = "Execution skipped - unsupported action.";
                 executionDesicion.DecisionStatus = DecisionStatus.Skipped;
                 await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
-                return;
+                return TerminalMetrics("UnsupportedAction", executionDesicion.ExecutionError);
             }
 
             if (!settings.ExecutionEnabled)
@@ -207,7 +376,7 @@ public class DecisionWorker(
                 executionDesicion.ExecutionError = "Execution skipped - execution is disabled.";
                 executionDesicion.DecisionStatus = DecisionStatus.Skipped;
                 await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
-                return;
+                return TerminalMetrics("ExecutionDisabled", executionDesicion.ExecutionError);
             }
 
             if (!settings.UseMarketOrders)
@@ -218,7 +387,7 @@ public class DecisionWorker(
                 executionDesicion.ExecutionError = "Execution skipped - only market orders are supported.";
                 executionDesicion.DecisionStatus = DecisionStatus.Skipped;
                 await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
-                return;
+                return TerminalMetrics("UnsupportedOrderType", executionDesicion.ExecutionError);
             }
 
             if (decision.Candidate is null || decision.Candidate.Price.GetValueOrDefault() <= 0m)
@@ -228,7 +397,7 @@ public class DecisionWorker(
                 executionDesicion.RiskReason = "Execution skipped - invalid trade candidate.";
                 executionDesicion.DecisionStatus = DecisionStatus.Skipped;
                 await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
-                return;
+                return TerminalMetrics("InvalidCandidate", executionDesicion.ExecutionError);
             }
 
             var executionSide = decision.Candidate.Side;
@@ -258,7 +427,7 @@ public class DecisionWorker(
                     "DecisionWorker execution skipped by position guard: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, TradingMode={TradingMode}, RawSignal={RawSignal}, ExecutionIntent={ExecutionIntent}, RequestedSide={RequestedSide}, RequestedQuantity={RequestedQuantity}, OpenPositionQuantity={OpenPositionQuantity}, Allowed={Allowed}, Reason={Reason}",
                     correlationId, decisionId, symbol, tradingMode, rawSignal, executionIntent, executionSide, executionQuantity, guardResult.OpenPositionQuantity, false, guardResult.Reason);
                 await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
-                return;
+                return TerminalMetrics("PositionGuard", executionDesicion.ExecutionError ?? guardResult.Reason);
             }
             logger.LogInformation(
                 "DecisionWorker position guard allowed execution: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, TradingMode={TradingMode}, RawSignal={RawSignal}, ExecutionIntent={ExecutionIntent}, RequestedSide={RequestedSide}, RequestedQuantity={RequestedQuantity}, OpenPositionQuantity={OpenPositionQuantity}, Allowed={Allowed}",
@@ -292,10 +461,10 @@ public class DecisionWorker(
                 executionDesicion.DecisionStatus = DecisionStatus.Skipped;
                 executionDesicion.GuardStage = GuardStage.Cooldown;
                 await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
-                return;
+                return TerminalMetrics("Cooldown", executionDesicion.ExecutionError);
             }
 
-            if (!await tradeIdempotencyService.TryRegisterDecisionAsync(idempotencyKey, settings.IdempotencyWindowSeconds, stoppingToken))
+            if (await tradeIdempotencyService.IsDuplicateDecisionAsync(idempotencyKey, settings.IdempotencyWindowSeconds, stoppingToken))
             {
                 logger.LogInformation(
                     "DecisionWorker execution skipped: CorrelationId={CorrelationId}, DecisionId={DecisionId}, IdempotencyKey={IdempotencyKey}, Symbol={Symbol}, RawSignal={RawSignal}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, Action={Action}, Side={Side}, IsInCooldown={IsInCooldown}, CooldownRemainingSeconds={CooldownRemainingSeconds}, IdempotencyDuplicate={IdempotencyDuplicate}, SkipReason={SkipReason}, ExecutionState={ExecutionState}",
@@ -305,10 +474,42 @@ public class DecisionWorker(
                 executionDesicion.DecisionStatus = DecisionStatus.Skipped;
                 executionDesicion.GuardStage = GuardStage.Idempotency;
                 await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
-                return;
+                return TerminalMetrics("Idempotency", executionDesicion.ExecutionError);
             }
 
             var requiresReducedPositionSize = decision.Candidate?.RequiresReducedPositionSize ?? false;
+            if (decision.Action == TradeSignal.Buy
+                && tradingMode == TradingMode.Spot
+                && executionIntent == TradeExecutionIntent.OpenLong
+                && requiresReducedPositionSize)
+            {
+                var minNotionalValidation = await spotPositionSizingService.ValidateMinNotionalAsync(
+                    symbol,
+                    executionQuantity,
+                    price,
+                    stoppingToken);
+                if (!minNotionalValidation.IsValid)
+                {
+                    logger.LogWarning(
+                        "DecisionWorker execution skipped after high-volatility reduction: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Quantity={Quantity}, Price={Price}, Notional={Notional}, MinNotional={MinNotional}, Reason={Reason}",
+                        correlationId,
+                        decisionId,
+                        symbol,
+                        executionQuantity,
+                        price,
+                        minNotionalValidation.Notional,
+                        minNotionalValidation.MinNotional,
+                        minNotionalValidation.Reason);
+                    executionDesicion.ExecutionError = minNotionalValidation.Reason;
+                    executionDesicion.RiskIsAllowed = false;
+                    executionDesicion.RiskReason = minNotionalValidation.Reason;
+                    executionDesicion.DecisionStatus = DecisionStatus.Skipped;
+                    executionDesicion.GuardStage = GuardStage.Risk;
+                    await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
+                    return TerminalMetrics("Risk", executionDesicion.ExecutionError ?? minNotionalValidation.Reason ?? "Risk validation failed.");
+                }
+            }
+
             var riskResult = await riskManagementService.ValidateTrade(
                 symbol,
                 executionQuantity,
@@ -337,59 +538,12 @@ public class DecisionWorker(
                 executionDesicion.DecisionStatus = DecisionStatus.Skipped;
                 executionDesicion.GuardStage = GuardStage.Risk;
                 await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
-                return;
+                return TerminalMetrics("Risk", executionDesicion.ExecutionError);
             }
 
             logger.LogInformation(
                 "DecisionWorker risk approved: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, Side={Side}, StopLossPrice={StopLossPrice}, TakeProfitPrice={TakeProfitPrice}",
                 correlationId, decisionId, symbol, executionSide, riskResult.StopLossPrice, riskResult.TakeProfitPrice);
-
-            var feeGuardResult = await feeProfitGuard.EvaluateAsync(
-                new FeeProfitGuardRequest
-                {
-                    Symbol = symbol,
-                    TradingMode = tradingMode,
-                    RawSignal = rawSignal,
-                    ExecutionIntent = executionIntent,
-                    Side = executionSide,
-                    Quantity = executionQuantity,
-                    EntryPrice = price > 0m ? price : null,
-                    TargetPrice = riskResult.TakeProfitPrice,
-                    StopLossPrice = riskResult.StopLossPrice,
-                    IsProtectiveExit = false
-                },
-                stoppingToken);
-            if (!feeGuardResult.IsAllowed)
-            {
-                executionDesicion.ExecutionSuccess = false;
-                executionDesicion.ExecutionError = feeGuardResult.Reason;
-                executionDesicion.RiskIsAllowed = false;
-                executionDesicion.RiskReason = feeGuardResult.Reason;
-                executionDesicion.DecisionStatus = DecisionStatus.Skipped;
-                executionDesicion.GuardStage = GuardStage.FeeProfitGuard;
-                logger.LogInformation(
-                    "DecisionWorker execution skipped by fee guard: CorrelationId={CorrelationId}, DecisionId={DecisionId}, Symbol={Symbol}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, Side={Side}, Quantity={Quantity}, EntryPrice={EntryPrice}, TargetPrice={TargetPrice}, StopLossPrice={StopLossPrice}, GrossExpectedProfitPercent={GrossExpectedProfitPercent}, EstimatedEntryFeePercent={EstimatedEntryFeePercent}, EstimatedExitFeePercent={EstimatedExitFeePercent}, EstimatedSpreadPercent={EstimatedSpreadPercent}, EstimatedTotalCostPercent={EstimatedTotalCostPercent}, NetExpectedProfitPercent={NetExpectedProfitPercent}, Allowed={Allowed}, Reason={Reason}",
-                    correlationId,
-                    decisionId,
-                    symbol,
-                    tradingMode,
-                    executionIntent,
-                    executionSide,
-                    executionQuantity,
-                    feeGuardResult.EntryPrice,
-                    feeGuardResult.TargetPrice,
-                    feeGuardResult.StopLossPrice,
-                    feeGuardResult.GrossExpectedProfitPercent,
-                    feeGuardResult.EstimatedEntryFeePercent,
-                    feeGuardResult.EstimatedExitFeePercent,
-                    feeGuardResult.EstimatedSpreadPercent,
-                    feeGuardResult.EstimatedTotalCostPercent,
-                    feeGuardResult.NetExpectedProfitPercent,
-                    false,
-                    feeGuardResult.Reason);
-                await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
-                return;
-            }
 
             var confidenceResult = await confidenceGate.EvaluateAsync(
                 new ConfidenceGateRequest
@@ -426,7 +580,7 @@ public class DecisionWorker(
                     false,
                     confidenceResult.Reason);
                 await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
-                return;
+                return TerminalMetrics("ConfidenceGate", executionDesicion.ExecutionError ?? confidenceResult.Reason ?? "Confidence gate blocked execution.");
             }
 
             var executionResult = await tradeExecutionService.ExecuteMarketOrderAsync(
@@ -440,12 +594,22 @@ public class DecisionWorker(
                     TradingMode = tradingMode,
                     RawSignal = rawSignal,
                     ExecutionIntent = executionIntent,
-                    CandidatePrice = price > 0m ? price : null
+                    RequiresReducedPositionSize = requiresReducedPositionSize,
+                    CandidatePrice = price > 0m ? price : null,
+                    ExpectedTargetPrice = decision.Candidate?.ExpectedTargetPrice,
+                    ExpectedMovePercent = decision.Candidate?.ExpectedMovePercent,
+                    ExpectedTargetSource = decision.Candidate?.ExpectedTargetSource,
+                    BreakoutRangeHigh = decision.Candidate?.BreakoutRangeHigh,
+                    BreakoutRangeLow = decision.Candidate?.BreakoutRangeLow,
+                    BreakoutThresholdPrice = decision.Candidate?.BreakoutThresholdPrice,
+                    ExpectedTargetStructureExtensionUsed = decision.Candidate?.ExpectedTargetStructureExtensionUsed,
+                    ExpectedTargetAtrUsed = decision.Candidate?.ExpectedTargetAtrUsed
                 },
                 stoppingToken);
 
             if (executionResult.Success)
             {
+                await tradeIdempotencyService.MarkDecisionExecutedAsync(idempotencyKey, settings.IdempotencyWindowSeconds, stoppingToken);
                 await tradeCooldownService.MarkTradeExecutedAsync(symbol, stoppingToken);
                 logger.LogInformation(
                     "DecisionWorker execution succeeded: CorrelationId={CorrelationId}, DecisionId={DecisionId}, IdempotencyKey={IdempotencyKey}, Symbol={Symbol}, RawSignal={RawSignal}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, Action={Action}, Side={Side}, IsInCooldown={IsInCooldown}, CooldownRemainingSeconds={CooldownRemainingSeconds}, IdempotencyDuplicate={IdempotencyDuplicate}, LocalOrderId={LocalOrderId}, ExchangeOrderId={ExchangeOrderId}, ExecutionState={ExecutionState}",
@@ -456,7 +620,7 @@ public class DecisionWorker(
                 executionDesicion.DecisionStatus = DecisionStatus.Executed;
                 executionDesicion.GuardStage = GuardStage.Execution;
                 await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
-                return;
+                return TerminalMetrics("Execution", "Executed");
             }
 
             logger.LogWarning(
@@ -466,6 +630,7 @@ public class DecisionWorker(
             executionDesicion.DecisionStatus = DecisionStatus.Failed;
             executionDesicion.GuardStage = GuardStage.Execution;
             await tradeExecutionDesicionsRepository.UpdateDesicionAsync(executionDesicion);
+            return TerminalMetrics("Execution", executionResult.Error ?? "Execution failed.");
         }
         catch (OperationCanceledException)
         {
@@ -478,7 +643,406 @@ public class DecisionWorker(
                 "DecisionWorker symbol pipeline failed: CorrelationId={CorrelationId}, Symbol={Symbol}",
                 correlationId,
                 symbol);
+            return new SymbolProcessingMetrics(
+                decisionServiceMs,
+                strategyMs,
+                decisionPersistMs,
+                TradeSignal.Hold,
+                $"Symbol pipeline exception: {ex.Message}");
         }
+    }
+
+    private async Task<CycleObservabilitySnapshot> ProcessRankedSymbolsAsync(
+        DecisionWorkerSettings settings,
+        string correlationId,
+        CancellationToken stoppingToken,
+        TradeDecisionService tradeDecisionService,
+        IRiskManagementService riskManagementService,
+        ITradeExecutionService tradeExecutionService,
+        ITradeCooldownService tradeCooldownService,
+        ITradeIdempotencyService tradeIdempotencyService,
+        ITradeExecutionDesicionsRepository tradeExecutionDesicionsRepository,
+        IPositionExecutionGuard positionExecutionGuard,
+        IConfidenceGate confidenceGate,
+        IPositionRepository positionRepository,
+        ISpotPositionSizingService spotPositionSizingService)
+    {
+        var evaluated = new List<SymbolOpportunity>(settings.Symbols.Count);
+        var evaluationStarts = new Dictionary<TradingSymbol, DateTime>(settings.Symbols.Count);
+        var quantityResolveDurations = new Dictionary<TradingSymbol, long>(settings.Symbols.Count);
+        var decisionServiceDurations = new Dictionary<TradingSymbol, long>(settings.Symbols.Count);
+        foreach (var symbol in settings.Symbols)
+        {
+            var symbolEvalStartUtc = DateTime.UtcNow;
+            evaluationStarts[symbol] = symbolEvalStartUtc;
+            var quantityTimer = Stopwatch.StartNew();
+            var sizingResult = await ResolveOpenLongQuantityAsync(
+                symbol,
+                settings,
+                spotPositionSizingService,
+                stoppingToken);
+            quantityTimer.Stop();
+            quantityResolveDurations[symbol] = quantityTimer.ElapsedMilliseconds;
+            if (!sizingResult.IsSuccess)
+            {
+                logger.LogWarning(
+                    "DecisionWorker skipped symbol opportunity due to position sizing rejection: Symbol={Symbol}, Reason={Reason}, QuantitySource={QuantitySource}",
+                    symbol,
+                    sizingResult.Reason,
+                    sizingResult.QuantitySource);
+                evaluated.Add(new SymbolOpportunity(
+                    symbol,
+                    0m,
+                    false,
+                    BuildSizingRejectedHoldDecision(symbol, sizingResult.Reason ?? "Position sizing rejected."),
+                    0m,
+                    false,
+                    sizingResult.Reason));
+                logger.LogInformation(
+                    "DecisionWorker symbol evaluation timing: CorrelationId={CorrelationId}, Symbol={Symbol}, SymbolEvalStartUtc={SymbolEvalStartUtc}, SymbolEvalEndUtc={SymbolEvalEndUtc}, SymbolElapsedMs={SymbolElapsedMs}, QuantityResolveMs={QuantityResolveMs}, DecisionServiceMs={DecisionServiceMs}, StrategyMs={StrategyMs}, DecisionPersistMs={DecisionPersistMs}, FinalAction={FinalAction}, FinalReason={FinalReason}",
+                    correlationId,
+                    symbol,
+                    symbolEvalStartUtc,
+                    DateTime.UtcNow,
+                    quantityTimer.ElapsedMilliseconds,
+                    quantityTimer.ElapsedMilliseconds,
+                    0L,
+                    null,
+                    null,
+                    TradeSignal.Hold,
+                    sizingResult.Reason ?? "Position sizing rejected.");
+                continue;
+            }
+
+            var requestedQuantity = sizingResult.Quantity;
+            var hasSymbolOverride = sizingResult.QuantitySource == SpotQuantitySource.SymbolOverride;
+            var decisionTimer = Stopwatch.StartNew();
+            var decision = await tradeDecisionService.MakeDecision(
+                symbol,
+                requestedQuantity,
+                stoppingToken,
+                allowStateMutation: false);
+            decisionTimer.Stop();
+            decisionServiceDurations[symbol] = decisionTimer.ElapsedMilliseconds;
+            var score = CalculateOpportunityScore(decision);
+            var isEntryCandidate = decision.Action == TradeSignal.Buy
+                                   && (decision.Candidate?.ExecutionIntent ?? decision.ExecutionIntent) == TradeExecutionIntent.OpenLong
+                                   && (decision.Candidate?.TradingMode ?? decision.TradingMode) == TradingMode.Spot;
+            var rejectionReason = isEntryCandidate && score >= settings.MinOpportunityScore
+                ? null
+                : decision.Reason;
+            evaluated.Add(new SymbolOpportunity(symbol, requestedQuantity, hasSymbolOverride, decision, score, isEntryCandidate, rejectionReason));
+
+            logger.LogInformation(
+                "DecisionWorker symbol opportunity evaluated: Symbol={Symbol}, RequestedQuantity={RequestedQuantity}, HasSymbolOverride={HasSymbolOverride}, QuantitySource={QuantitySource}, Action={Action}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, TrendConfidence={TrendConfidence}, MarketConditionScore={MarketConditionScore}, ExpectedTargetPrice={ExpectedTargetPrice}, ExpectedMovePercent={ExpectedMovePercent}, ExpectedTargetSource={ExpectedTargetSource}, FeeProfitGuardStatus={FeeProfitGuardStatus}, RejectionReason={RejectionReason}, OpportunityScore={OpportunityScore}, MinOpportunityScore={MinOpportunityScore}, AvailableQuoteBalance={AvailableQuoteBalance}, ReservedQuoteBalance={ReservedQuoteBalance}, UsableQuoteBalance={UsableQuoteBalance}, DesiredQuoteAmount={DesiredQuoteAmount}, CappedQuoteAmount={CappedQuoteAmount}, FinalNotional={FinalNotional}, MinNotional={MinNotional}",
+                symbol,
+                requestedQuantity,
+                hasSymbolOverride,
+                sizingResult.QuantitySource,
+                decision.Action,
+                decision.Candidate?.TradingMode ?? decision.TradingMode,
+                decision.Candidate?.ExecutionIntent ?? decision.ExecutionIntent,
+                decision.TrendConfidenceScore,
+                decision.MarketConditionScore,
+                decision.Candidate?.ExpectedTargetPrice,
+                decision.Candidate?.ExpectedMovePercent,
+                decision.Candidate?.ExpectedTargetSource,
+                "PendingExecution",
+                rejectionReason,
+                score,
+                settings.MinOpportunityScore,
+                sizingResult.AvailableQuoteBalance,
+                sizingResult.ReservedQuoteBalance,
+                sizingResult.UsableQuoteBalance,
+                sizingResult.DesiredQuoteAmount,
+                sizingResult.CappedQuoteAmount,
+                sizingResult.FinalNotional,
+                sizingResult.MinNotional);
+            logger.LogInformation(
+                "DecisionWorker symbol evaluation timing: CorrelationId={CorrelationId}, Symbol={Symbol}, SymbolEvalStartUtc={SymbolEvalStartUtc}, SymbolEvalEndUtc={SymbolEvalEndUtc}, SymbolElapsedMs={SymbolElapsedMs}, QuantityResolveMs={QuantityResolveMs}, DecisionServiceMs={DecisionServiceMs}, StrategyMs={StrategyMs}, DecisionPersistMs={DecisionPersistMs}, FinalAction={FinalAction}, FinalReason={FinalReason}",
+                correlationId,
+                symbol,
+                symbolEvalStartUtc,
+                DateTime.UtcNow,
+                quantityTimer.ElapsedMilliseconds + decisionTimer.ElapsedMilliseconds,
+                quantityTimer.ElapsedMilliseconds,
+                decisionTimer.ElapsedMilliseconds,
+                null,
+                null,
+                decision.Action,
+                decision.Reason);
+        }
+
+        var rankedEntryCandidates = evaluated
+            .Where(x => x.IsEntryCandidate && x.OpportunityScore >= settings.MinOpportunityScore)
+            .OrderByDescending(x => x.OpportunityScore)
+            .ThenBy(x => x.Symbol.ToString(), StringComparer.Ordinal)
+            .ToList();
+
+        var openPositions = await positionRepository.GetOpenPositionsAsync(stoppingToken);
+        var openCount = openPositions.Count(p => p.IsOpen);
+        var availableOpenSlots = Math.Max(0, settings.GlobalMaxOpenPositions - openCount);
+        var selectedSymbolsByRanking = SelectRankedEntrySymbols(
+            evaluated.ToDictionary(x => x.Symbol, x => x.Decision),
+            settings.MinOpportunityScore,
+            settings.MaxSymbolsToTradePerCycle,
+            availableOpenSlots);
+        var selectedEntries = rankedEntryCandidates
+            .Where(x => selectedSymbolsByRanking.Contains(x.Symbol))
+            .ToList();
+        var selectedSymbols = selectedEntries.Select(x => x.Symbol).ToHashSet();
+
+        logger.LogInformation(
+            "DecisionWorker symbol ranking result: TotalSymbols={TotalSymbols}, RankedEntryCandidates={RankedEntryCandidates}, SelectedEntries={SelectedEntries}, MaxSymbolsToTradePerCycle={MaxSymbolsToTradePerCycle}, GlobalMaxOpenPositions={GlobalMaxOpenPositions}, CurrentOpenPositions={CurrentOpenPositions}, AvailableOpenSlots={AvailableOpenSlots}, SelectedSymbols={SelectedSymbols}",
+            settings.Symbols.Count,
+            rankedEntryCandidates.Count,
+            selectedEntries.Count,
+            settings.MaxSymbolsToTradePerCycle,
+            settings.GlobalMaxOpenPositions,
+            openCount,
+            availableOpenSlots,
+            string.Join(",", selectedEntries.Select(x => x.Symbol)));
+
+        foreach (var candidate in rankedEntryCandidates.Select((x, i) => new { Candidate = x, Rank = i + 1 }))
+        {
+            logger.LogInformation(
+                "DecisionWorker symbol rank: Symbol={Symbol}, Rank={Rank}, OpportunityScore={OpportunityScore}, Selected={Selected}, ExpectedMovePercent={ExpectedMovePercent}, Reason={Reason}",
+                candidate.Candidate.Symbol,
+                candidate.Rank,
+                candidate.Candidate.OpportunityScore,
+                selectedSymbols.Contains(candidate.Candidate.Symbol),
+                candidate.Candidate.Decision.Candidate?.ExpectedMovePercent,
+                candidate.Candidate.Decision.Reason);
+        }
+
+        foreach (var opportunity in evaluated)
+        {
+            var decision = opportunity.Decision;
+            var executionIntent = decision.Candidate?.ExecutionIntent ?? decision.ExecutionIntent;
+            var shouldAlwaysProcess = decision.Action == TradeSignal.Sell
+                                      && executionIntent == TradeExecutionIntent.CloseLong;
+            var shouldProcessSelectedEntry = opportunity.IsEntryCandidate && selectedSymbols.Contains(opportunity.Symbol);
+            if (shouldAlwaysProcess || shouldProcessSelectedEntry)
+            {
+                var metrics = await ProcessSymbolAsync(
+                    opportunity.Symbol,
+                    opportunity.RequestedQuantity,
+                    settings,
+                    correlationId,
+                    stoppingToken,
+                    tradeDecisionService,
+                    riskManagementService,
+                    tradeExecutionService,
+                    tradeCooldownService,
+                    tradeIdempotencyService,
+                    tradeExecutionDesicionsRepository,
+                    positionExecutionGuard,
+                    confidenceGate,
+                    spotPositionSizingService,
+                    decision);
+                logger.LogInformation(
+                    "DecisionWorker symbol evaluation timing: CorrelationId={CorrelationId}, Symbol={Symbol}, SymbolEvalStartUtc={SymbolEvalStartUtc}, SymbolEvalEndUtc={SymbolEvalEndUtc}, SymbolElapsedMs={SymbolElapsedMs}, QuantityResolveMs={QuantityResolveMs}, DecisionServiceMs={DecisionServiceMs}, StrategyMs={StrategyMs}, DecisionPersistMs={DecisionPersistMs}, FinalAction={FinalAction}, FinalReason={FinalReason}",
+                    correlationId,
+                    opportunity.Symbol,
+                    evaluationStarts.TryGetValue(opportunity.Symbol, out var evalStartUtc) ? evalStartUtc : DateTime.UtcNow,
+                    DateTime.UtcNow,
+                    evaluationStarts.TryGetValue(opportunity.Symbol, out var fullStartUtc)
+                        ? (long)(DateTime.UtcNow - fullStartUtc).TotalMilliseconds
+                        : 0L,
+                    quantityResolveDurations.GetValueOrDefault(opportunity.Symbol),
+                    decisionServiceDurations.GetValueOrDefault(opportunity.Symbol),
+                    metrics.StrategyMs,
+                    metrics.DecisionPersistMs,
+                    metrics.FinalAction,
+                    metrics.FinalReason);
+                continue;
+            }
+
+            if (opportunity.IsEntryCandidate)
+            {
+                logger.LogInformation(
+                    "DecisionWorker symbol skipped by ranking: Symbol={Symbol}, OpportunityScore={OpportunityScore}, MinOpportunityScore={MinOpportunityScore}, Selected={Selected}, Reason={Reason}",
+                    opportunity.Symbol,
+                    opportunity.OpportunityScore,
+                    settings.MinOpportunityScore,
+                    false,
+                    "Not in selected ranked opportunities.");
+                logger.LogInformation(
+                    "DecisionWorker symbol evaluation timing: CorrelationId={CorrelationId}, Symbol={Symbol}, SymbolEvalStartUtc={SymbolEvalStartUtc}, SymbolEvalEndUtc={SymbolEvalEndUtc}, SymbolElapsedMs={SymbolElapsedMs}, QuantityResolveMs={QuantityResolveMs}, DecisionServiceMs={DecisionServiceMs}, StrategyMs={StrategyMs}, DecisionPersistMs={DecisionPersistMs}, FinalAction={FinalAction}, FinalReason={FinalReason}",
+                    correlationId,
+                    opportunity.Symbol,
+                    evaluationStarts.TryGetValue(opportunity.Symbol, out var evalStartUtc) ? evalStartUtc : DateTime.UtcNow,
+                    DateTime.UtcNow,
+                    evaluationStarts.TryGetValue(opportunity.Symbol, out var fullStartUtc)
+                        ? (long)(DateTime.UtcNow - fullStartUtc).TotalMilliseconds
+                        : 0L,
+                    quantityResolveDurations.GetValueOrDefault(opportunity.Symbol),
+                    decisionServiceDurations.GetValueOrDefault(opportunity.Symbol),
+                    null,
+                    null,
+                    TradeSignal.Hold,
+                    "Execution skipped by symbol ranking layer.");
+            }
+            else if (decision.Action != TradeSignal.Hold)
+            {
+                var metrics = await ProcessSymbolAsync(
+                    opportunity.Symbol,
+                    opportunity.RequestedQuantity,
+                    settings,
+                    correlationId,
+                    stoppingToken,
+                    tradeDecisionService,
+                    riskManagementService,
+                    tradeExecutionService,
+                    tradeCooldownService,
+                    tradeIdempotencyService,
+                    tradeExecutionDesicionsRepository,
+                    positionExecutionGuard,
+                    confidenceGate,
+                    spotPositionSizingService,
+                    BuildRankingSkippedHoldDecision(decision, "Execution skipped by symbol ranking layer."));
+                logger.LogInformation(
+                    "DecisionWorker symbol evaluation timing: CorrelationId={CorrelationId}, Symbol={Symbol}, SymbolEvalStartUtc={SymbolEvalStartUtc}, SymbolEvalEndUtc={SymbolEvalEndUtc}, SymbolElapsedMs={SymbolElapsedMs}, QuantityResolveMs={QuantityResolveMs}, DecisionServiceMs={DecisionServiceMs}, StrategyMs={StrategyMs}, DecisionPersistMs={DecisionPersistMs}, FinalAction={FinalAction}, FinalReason={FinalReason}",
+                    correlationId,
+                    opportunity.Symbol,
+                    evaluationStarts.TryGetValue(opportunity.Symbol, out var evalStartUtc) ? evalStartUtc : DateTime.UtcNow,
+                    DateTime.UtcNow,
+                    evaluationStarts.TryGetValue(opportunity.Symbol, out var fullStartUtc)
+                        ? (long)(DateTime.UtcNow - fullStartUtc).TotalMilliseconds
+                        : 0L,
+                    quantityResolveDurations.GetValueOrDefault(opportunity.Symbol),
+                    decisionServiceDurations.GetValueOrDefault(opportunity.Symbol),
+                    metrics.StrategyMs,
+                    metrics.DecisionPersistMs,
+                    metrics.FinalAction,
+                    metrics.FinalReason);
+            }
+            else
+            {
+                var metrics = await ProcessSymbolAsync(
+                    opportunity.Symbol,
+                    opportunity.RequestedQuantity,
+                    settings,
+                    correlationId,
+                    stoppingToken,
+                    tradeDecisionService,
+                    riskManagementService,
+                    tradeExecutionService,
+                    tradeCooldownService,
+                    tradeIdempotencyService,
+                    tradeExecutionDesicionsRepository,
+                    positionExecutionGuard,
+                    confidenceGate,
+                    spotPositionSizingService,
+                    decision);
+                logger.LogInformation(
+                    "DecisionWorker symbol evaluation timing: CorrelationId={CorrelationId}, Symbol={Symbol}, SymbolEvalStartUtc={SymbolEvalStartUtc}, SymbolEvalEndUtc={SymbolEvalEndUtc}, SymbolElapsedMs={SymbolElapsedMs}, QuantityResolveMs={QuantityResolveMs}, DecisionServiceMs={DecisionServiceMs}, StrategyMs={StrategyMs}, DecisionPersistMs={DecisionPersistMs}, FinalAction={FinalAction}, FinalReason={FinalReason}",
+                    correlationId,
+                    opportunity.Symbol,
+                    evaluationStarts.TryGetValue(opportunity.Symbol, out var evalStartUtc) ? evalStartUtc : DateTime.UtcNow,
+                    DateTime.UtcNow,
+                    evaluationStarts.TryGetValue(opportunity.Symbol, out var fullStartUtc)
+                        ? (long)(DateTime.UtcNow - fullStartUtc).TotalMilliseconds
+                        : 0L,
+                    quantityResolveDurations.GetValueOrDefault(opportunity.Symbol),
+                    decisionServiceDurations.GetValueOrDefault(opportunity.Symbol),
+                    metrics.StrategyMs,
+                    metrics.DecisionPersistMs,
+                    metrics.FinalAction,
+                    metrics.FinalReason);
+            }
+        }
+
+        return new CycleObservabilitySnapshot(
+            selectedEntries.Select(x => x.Symbol).ToArray(),
+            openCount,
+            availableOpenSlots);
+    }
+
+    private static async Task<SpotPositionSizingResult> ResolveOpenLongQuantityAsync(
+        TradingSymbol symbol,
+        DecisionWorkerSettings settings,
+        ISpotPositionSizingService spotPositionSizingService,
+        CancellationToken cancellationToken)
+    {
+        return await spotPositionSizingService.ResolveOpenLongQuantityAsync(
+            new SpotPositionSizingRequest
+            {
+                Symbol = symbol,
+                GlobalQuantity = settings.Quantity,
+                SymbolQuantities = settings.SymbolQuantities
+            },
+            cancellationToken);
+    }
+
+    private static DecisionResult BuildSizingRejectedHoldDecision(TradingSymbol symbol, string reason)
+    {
+        return new DecisionResult
+        {
+            Action = TradeSignal.Hold,
+            StrategyName = "PositionSizing",
+            RawSignal = TradeSignal.Hold,
+            TradingMode = TradingMode.Spot,
+            ExecutionIntent = TradeExecutionIntent.OpenLong,
+            Reason = $"Position sizing rejected for {symbol}: {reason}",
+            Confidence = 0m
+        };
+    }
+
+    private static decimal CalculateOpportunityScore(DecisionResult decision)
+    {
+        if (decision.Action != TradeSignal.Buy)
+            return 0m;
+
+        var baseScore = Math.Clamp(decision.Confidence, 0m, 1m) * 100m;
+        var expectedMoveBoost = Math.Max(0m, decision.Candidate?.ExpectedMovePercent ?? 0m);
+        var trendConfidenceBoost = Math.Max(0m, decision.TrendConfidenceScore ?? 0) * 0.2m;
+        var marketConditionBoost = Math.Max(0m, decision.MarketConditionScore ?? 0) * 0.1m;
+        return Math.Round(baseScore + expectedMoveBoost + trendConfidenceBoost + marketConditionBoost, 4);
+    }
+
+    private static IReadOnlyList<TradingSymbol> SelectRankedEntrySymbols(
+        IReadOnlyDictionary<TradingSymbol, DecisionResult> decisionsBySymbol,
+        decimal minOpportunityScore,
+        int maxSymbolsToTradePerCycle,
+        int availableOpenSlots)
+    {
+        var maxEntriesToExecute = Math.Max(0, Math.Min(maxSymbolsToTradePerCycle, availableOpenSlots));
+        if (maxEntriesToExecute == 0 || decisionsBySymbol.Count == 0)
+            return [];
+
+        return decisionsBySymbol
+            .Where(x =>
+            {
+                var executionIntent = x.Value.Candidate?.ExecutionIntent ?? x.Value.ExecutionIntent;
+                var tradingMode = x.Value.Candidate?.TradingMode ?? x.Value.TradingMode;
+                return x.Value.Action == TradeSignal.Buy
+                       && tradingMode == TradingMode.Spot
+                       && executionIntent == TradeExecutionIntent.OpenLong
+                       && CalculateOpportunityScore(x.Value) >= minOpportunityScore;
+            })
+            .OrderByDescending(x => CalculateOpportunityScore(x.Value))
+            .ThenBy(x => x.Key.ToString(), StringComparer.Ordinal)
+            .Take(maxEntriesToExecute)
+            .Select(x => x.Key)
+            .ToArray();
+    }
+
+    private static DecisionResult BuildRankingSkippedHoldDecision(DecisionResult source, string reason)
+    {
+        return new DecisionResult
+        {
+            StrategyName = source.StrategyName,
+            Action = TradeSignal.Hold,
+            RawSignal = source.RawSignal,
+            TradingMode = source.TradingMode,
+            ExecutionIntent = source.ExecutionIntent,
+            Reason = reason,
+            Candidate = source.Candidate,
+            Confidence = source.Confidence,
+            TrendConfidenceScore = source.TrendConfidenceScore,
+            MarketConditionScore = source.MarketConditionScore
+        };
     }
 
     private DecisionWorkerSettings ReadSettings()
@@ -539,7 +1103,11 @@ public class DecisionWorker(
             UseMarketOrders = execution.UseMarketOrders,
             MinExecutionConfidence = Math.Clamp(decision.MinExecutionConfidence, 0m, 1m),
             TradeCooldownSeconds = cooldownSeconds,
-            IdempotencyWindowSeconds = decision.IdempotencyWindowSeconds
+            IdempotencyWindowSeconds = decision.IdempotencyWindowSeconds,
+            EnableSymbolRanking = decision.EnableSymbolRanking,
+            MaxSymbolsToTradePerCycle = decision.MaxSymbolsToTradePerCycle,
+            MinOpportunityScore = decision.MinOpportunityScore,
+            GlobalMaxOpenPositions = RuntimeTradingConfigResolver.ResolveRisk(configuration).MaxOpenPositions
         };
     }
 
@@ -598,5 +1166,30 @@ public class DecisionWorker(
         public decimal MinExecutionConfidence { get; init; }
         public int TradeCooldownSeconds { get; init; }
         public int IdempotencyWindowSeconds { get; init; }
+        public bool EnableSymbolRanking { get; init; }
+        public int MaxSymbolsToTradePerCycle { get; init; }
+        public decimal MinOpportunityScore { get; init; }
+        public int GlobalMaxOpenPositions { get; init; }
     }
+
+    private sealed record SymbolProcessingMetrics(
+        long DecisionServiceMs,
+        decimal? StrategyMs,
+        long? DecisionPersistMs,
+        TradeSignal FinalAction,
+        string FinalReason);
+
+    private sealed record CycleObservabilitySnapshot(
+        IReadOnlyList<TradingSymbol> SelectedSymbols,
+        int CurrentOpenPositions,
+        int AvailableOpenSlots);
+
+    private sealed record SymbolOpportunity(
+        TradingSymbol Symbol,
+        decimal RequestedQuantity,
+        bool HasSymbolOverride,
+        DecisionResult Decision,
+        decimal OpportunityScore,
+        bool IsEntryCandidate,
+        string? RejectionReason);
 }

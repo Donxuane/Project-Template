@@ -269,7 +269,10 @@ public class DecisionServiceTradingModeTests
     {
         public int RequiredPeriods => 1;
 
-        public Task<StrategySignalResult> GenerateSignalAsync(MarketSnapshot marketData, CancellationToken cancellationToken = default)
+        public Task<StrategySignalResult> GenerateSignalAsync(
+            MarketSnapshot marketData,
+            CancellationToken cancellationToken = default,
+            bool allowStateMutation = true)
             => Task.FromResult(new StrategySignalResult
             {
                 Signal = signal,

@@ -249,7 +249,10 @@ public class DecisionServicePositionStateReconciliationTests
         public int RequiredPeriods => 1;
         public bool LastObservedInPosition { get; private set; }
 
-        public Task<StrategySignalResult> GenerateSignalAsync(MarketSnapshot marketData, CancellationToken cancellationToken = default)
+        public Task<StrategySignalResult> GenerateSignalAsync(
+            MarketSnapshot marketData,
+            CancellationToken cancellationToken = default,
+            bool allowStateMutation = true)
         {
             var state = positionManager.GetState(marketData.Symbol);
             LastObservedInPosition = state.IsInPosition;
@@ -267,7 +270,10 @@ public class DecisionServicePositionStateReconciliationTests
         public int RequiredPeriods => 1;
         public List<bool> ObservedStatesBeforeSignal { get; } = [];
 
-        public Task<StrategySignalResult> GenerateSignalAsync(MarketSnapshot marketData, CancellationToken cancellationToken = default)
+        public Task<StrategySignalResult> GenerateSignalAsync(
+            MarketSnapshot marketData,
+            CancellationToken cancellationToken = default,
+            bool allowStateMutation = true)
         {
             var state = positionManager.GetState(marketData.Symbol);
             ObservedStatesBeforeSignal.Add(state.IsInPosition);

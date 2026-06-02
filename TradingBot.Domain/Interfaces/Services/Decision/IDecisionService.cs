@@ -5,5 +5,9 @@ namespace TradingBot.Domain.Interfaces.Services.Decision;
 
 public interface IDecisionService
 {
-    Task<DecisionResult> DecideAsync(TradingSymbol symbol, decimal quantity, CancellationToken cancellationToken = default);
+    Task<DecisionResult> DecideAsync(
+        TradingSymbol symbol,
+        decimal quantity,
+        CancellationToken cancellationToken = default,
+        bool allowStateMutation = true);
 }

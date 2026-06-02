@@ -57,10 +57,12 @@ public class CandleServiceFallbackFreshnessTests
         Assert.Equal(expectedCompletedClose, snapshot.CurrentPriceAsOfUtc);
         Assert.Equal(expectedCompletedOpen, snapshot.LatestClosedCandleOpenTimeUtc);
         Assert.Equal(expectedCompletedClose, snapshot.LatestClosedCandleCloseTimeUtc);
+        var expectedAgeSeconds = (decimal)(DateTime.UtcNow - expectedCompletedClose).TotalSeconds;
+        Assert.True(snapshot.LatestClosedCandleAgeSeconds >= 0m);
+        Assert.InRange(snapshot.LatestClosedCandleAgeSeconds!.Value, expectedAgeSeconds - 3m, expectedAgeSeconds + 3m);
         Assert.Equal(100.0m, snapshot.LatestClosedCandleClosePrice);
         Assert.Equal(100.0m, snapshot.CurrentPrice);
         Assert.True(snapshot.MarketDataAgeSeconds >= 0m);
-        var expectedAgeSeconds = (decimal)(DateTime.UtcNow - expectedCompletedClose).TotalSeconds;
         Assert.InRange(snapshot.MarketDataAgeSeconds!.Value, expectedAgeSeconds - 3m, expectedAgeSeconds + 3m);
     }
 

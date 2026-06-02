@@ -42,7 +42,19 @@ public class TradeExecutionService(
                         CloseReason: closeReason,
                         ParentPositionId: parentPositionId,
                         CorrelationId: request.CorrelationId,
-                        CandidatePrice: request.CandidatePrice),
+                        CandidatePrice: request.CandidatePrice,
+                        TradingMode: request.TradingMode,
+                        ExecutionIntent: request.ExecutionIntent,
+                        RawSignal: request.RawSignal,
+                        RequiresReducedPositionSize: request.RequiresReducedPositionSize,
+                        ExpectedTargetPrice: request.ExpectedTargetPrice,
+                        ExpectedMovePercent: request.ExpectedMovePercent,
+                        ExpectedTargetSource: request.ExpectedTargetSource,
+                        BreakoutRangeHigh: request.BreakoutRangeHigh,
+                        BreakoutRangeLow: request.BreakoutRangeLow,
+                        BreakoutThresholdPrice: request.BreakoutThresholdPrice,
+                        ExpectedTargetStructureExtensionUsed: request.ExpectedTargetStructureExtensionUsed,
+                        ExpectedTargetAtrUsed: request.ExpectedTargetAtrUsed),
                     cancellationToken);
 
                 if (orderResult.Success)

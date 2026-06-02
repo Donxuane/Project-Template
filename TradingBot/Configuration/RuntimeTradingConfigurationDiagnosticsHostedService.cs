@@ -52,11 +52,14 @@ public sealed class RuntimeTradingConfigurationDiagnosticsHostedService(
         var execution = RuntimeTradingConfigResolver.ResolveExecution(configuration);
 
         logger.LogInformation(
-            "Runtime trading settings resolved: TradingMode={TradingMode}, ExecutionEnabled={ExecutionEnabled}, MinConfidence={MinConfidence}, ExitMinConfidence={ExitMinConfidence}, SymbolQuantities={SymbolQuantities}, StrategyMinConfidence={StrategyMinConfidence}, StrategyExitMinConfidence={StrategyExitMinConfidence}, MA.RequireCrossoverForEntry={RequireCrossoverForEntry}, MA.MinimumTrendConfidenceScore={MinimumTrendConfidenceScore}, MA.MinimumMarketConditionScore={MinimumMarketConditionScore}, MA.EnableLowVolatilityBreakoutEntry={EnableLowVolatilityBreakoutEntry}, MA.BreakoutLookbackCandles={BreakoutLookbackCandles}, MA.BreakoutBufferPercent={BreakoutBufferPercent}, MA.MinBreakoutSlopePercent={MinBreakoutSlopePercent}, MA.RequireBreakoutConfirmation={RequireBreakoutConfirmation}, MA.BreakoutConfirmationCandles={BreakoutConfirmationCandles}, MA.BreakoutHoldBufferPercent={BreakoutHoldBufferPercent}, MA.RequireCloseAboveBreakoutThreshold={RequireCloseAboveBreakoutThreshold}, MA.RequireShortSlopeStillPositiveOnConfirmation={RequireShortSlopeStillPositiveOnConfirmation}, MA.RequireNoImmediateBearishCandleAfterBreakout={RequireNoImmediateBearishCandleAfterBreakout}, TradeMonitoring.DynamicTimeExit={DynamicTimeExit}, TradeMonitoring.FirstReviewMinutes={FirstReviewMinutes}, TradeMonitoring.CloseEarlyIfLossAfterMinutes={CloseEarlyIfLossAfterMinutes}, TradeMonitoring.EarlyExitLossPercent={EarlyExitLossPercent}, Risk.MaxOpenPositions={MaxOpenPositions}, Trading.MaxOpenPositionsPerSymbol={MaxOpenPositionsPerSymbol}",
+            "Runtime trading settings resolved: TradingMode={TradingMode}, ExecutionEnabled={ExecutionEnabled}, MinConfidence={MinConfidence}, ExitMinConfidence={ExitMinConfidence}, EnableSymbolRanking={EnableSymbolRanking}, MaxSymbolsToTradePerCycle={MaxSymbolsToTradePerCycle}, MinOpportunityScore={MinOpportunityScore}, SymbolQuantities={SymbolQuantities}, StrategyMinConfidence={StrategyMinConfidence}, StrategyExitMinConfidence={StrategyExitMinConfidence}, MA.RequireCrossoverForEntry={RequireCrossoverForEntry}, MA.MinimumTrendConfidenceScore={MinimumTrendConfidenceScore}, MA.MinimumMarketConditionScore={MinimumMarketConditionScore}, MA.EnableLowVolatilityBreakoutEntry={EnableLowVolatilityBreakoutEntry}, MA.BreakoutLookbackCandles={BreakoutLookbackCandles}, MA.BreakoutBufferPercent={BreakoutBufferPercent}, MA.MinBreakoutSlopePercent={MinBreakoutSlopePercent}, MA.RequireBreakoutConfirmation={RequireBreakoutConfirmation}, MA.BreakoutConfirmationCandles={BreakoutConfirmationCandles}, MA.BreakoutHoldBufferPercent={BreakoutHoldBufferPercent}, MA.RequireCloseAboveBreakoutThreshold={RequireCloseAboveBreakoutThreshold}, MA.RequireShortSlopeStillPositiveOnConfirmation={RequireShortSlopeStillPositiveOnConfirmation}, MA.RequireNoImmediateBearishCandleAfterBreakout={RequireNoImmediateBearishCandleAfterBreakout}, MA.EnableNetAwareMomentumExit={EnableNetAwareMomentumExit}, MA.MomentumExitMinTradeAgeMinutes={MomentumExitMinTradeAgeMinutes}, MA.MomentumExitAllowIfUnrealizedLossPercentBelow={MomentumExitAllowIfUnrealizedLossPercentBelow}, MA.MomentumExitRequireBearishConfirmationWhenFeeNegative={MomentumExitRequireBearishConfirmationWhenFeeNegative}, MA.MomentumExitMinNetProfitPercent={MomentumExitMinNetProfitPercent}, TradeMonitoring.DynamicTimeExit={DynamicTimeExit}, TradeMonitoring.FirstReviewMinutes={FirstReviewMinutes}, TradeMonitoring.CloseEarlyIfLossAfterMinutes={CloseEarlyIfLossAfterMinutes}, TradeMonitoring.EarlyExitLossPercent={EarlyExitLossPercent}, Risk.MaxOpenPositions={MaxOpenPositions}, Trading.MaxOpenPositionsPerSymbol={MaxOpenPositionsPerSymbol}",
             trading.Mode,
             execution.Enabled,
             decision.MinConfidence,
             decision.ExitMinConfidence,
+            decision.EnableSymbolRanking,
+            decision.MaxSymbolsToTradePerCycle,
+            decision.MinOpportunityScore,
             string.Join(", ", decision.SymbolQuantities.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}:{kv.Value}")),
             decision.Strategies.TryGetValue("MovingAverageCrossover", out var strategy) ? strategy.MinConfidence : null,
             decision.Strategies.TryGetValue("MovingAverageCrossover", out strategy) ? strategy.ExitMinConfidence : null,
@@ -73,11 +76,23 @@ public sealed class RuntimeTradingConfigurationDiagnosticsHostedService(
             movingAverage.RequireCloseAboveBreakoutThreshold,
             movingAverage.RequireShortSlopeStillPositiveOnConfirmation,
             movingAverage.RequireNoImmediateBearishCandleAfterBreakout,
+            movingAverage.EnableNetAwareMomentumExit,
+            movingAverage.MomentumExitMinTradeAgeMinutes,
+            movingAverage.MomentumExitAllowIfUnrealizedLossPercentBelow,
+            movingAverage.MomentumExitRequireBearishConfirmationWhenFeeNegative,
+            movingAverage.MomentumExitMinNetProfitPercent,
             monitoring.EnableDynamicTimeExit,
             monitoring.FirstReviewMinutes,
             monitoring.CloseEarlyIfLossAfterMinutes,
             monitoring.EarlyExitLossPercent,
             risk.MaxOpenPositions,
             trading.MaxOpenPositionsPerSymbol);
+
+        logger.LogInformation(
+            "Runtime trading normal-trend target projection settings resolved: MA.NormalTrendAtrExtensionMultiplier={NormalTrendAtrExtensionMultiplier}, MA.NormalTrendStructureExtensionMultiplier={NormalTrendStructureExtensionMultiplier}, MA.NormalTrendExpectedTargetLookbackCandles={NormalTrendExpectedTargetLookbackCandles}, MA.NormalTrendUseMinAtrStructureExtension={NormalTrendUseMinAtrStructureExtension}",
+            movingAverage.NormalTrendAtrExtensionMultiplier,
+            movingAverage.NormalTrendStructureExtensionMultiplier,
+            movingAverage.NormalTrendExpectedTargetLookbackCandles,
+            movingAverage.NormalTrendUseMinAtrStructureExtension);
     }
 }

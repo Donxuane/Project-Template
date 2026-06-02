@@ -36,7 +36,13 @@ public class OrderTraceabilityTests
                 Quantity = 0.01m,
                 TradingMode = TradingMode.Spot,
                 RawSignal = TradeSignal.Buy,
-                ExecutionIntent = TradeExecutionIntent.OpenLong
+                ExecutionIntent = TradeExecutionIntent.OpenLong,
+                ExpectedTargetPrice = 635m,
+                ExpectedMovePercent = 0.63m,
+                ExpectedTargetSource = "MovingAverageTrendStrategy.LowVolBreakoutExpectedTarget",
+                BreakoutRangeHigh = 632m,
+                BreakoutRangeLow = 629m,
+                BreakoutThresholdPrice = 632.1m
             },
             CancellationToken.None);
 
@@ -44,6 +50,16 @@ public class OrderTraceabilityTests
         Assert.Equal(OrderSource.DecisionWorker, mediator.LastPlaceSpotOrderCommand!.OrderSource);
         Assert.Equal(CloseReason.None, mediator.LastPlaceSpotOrderCommand.CloseReason);
         Assert.Equal("corr-123", mediator.LastPlaceSpotOrderCommand.CorrelationId);
+        Assert.Equal(TradingMode.Spot, mediator.LastPlaceSpotOrderCommand.TradingMode);
+        Assert.Equal(TradeExecutionIntent.OpenLong, mediator.LastPlaceSpotOrderCommand.ExecutionIntent);
+        Assert.Equal(TradeSignal.Buy, mediator.LastPlaceSpotOrderCommand.RawSignal);
+        Assert.False(mediator.LastPlaceSpotOrderCommand.RequiresReducedPositionSize);
+        Assert.Equal(635m, mediator.LastPlaceSpotOrderCommand.ExpectedTargetPrice);
+        Assert.Equal(0.63m, mediator.LastPlaceSpotOrderCommand.ExpectedMovePercent);
+        Assert.Equal("MovingAverageTrendStrategy.LowVolBreakoutExpectedTarget", mediator.LastPlaceSpotOrderCommand.ExpectedTargetSource);
+        Assert.Equal(632m, mediator.LastPlaceSpotOrderCommand.BreakoutRangeHigh);
+        Assert.Equal(629m, mediator.LastPlaceSpotOrderCommand.BreakoutRangeLow);
+        Assert.Equal(632.1m, mediator.LastPlaceSpotOrderCommand.BreakoutThresholdPrice);
     }
 
     [Fact]
@@ -79,13 +95,24 @@ public class OrderTraceabilityTests
                 Quantity = 0.01m,
                 TradingMode = TradingMode.Spot,
                 RawSignal = TradeSignal.Sell,
-                ExecutionIntent = TradeExecutionIntent.CloseLong
+                ExecutionIntent = TradeExecutionIntent.CloseLong,
+                RequiresReducedPositionSize = true,
+                ExpectedTargetPrice = null,
+                ExpectedMovePercent = null,
+                ExpectedTargetSource = null,
+                BreakoutRangeHigh = null,
+                BreakoutRangeLow = null,
+                BreakoutThresholdPrice = null
             },
             CancellationToken.None);
 
         Assert.NotNull(mediator.LastPlaceSpotOrderCommand);
         Assert.Equal(42, mediator.LastPlaceSpotOrderCommand!.ParentPositionId);
         Assert.Equal(CloseReason.OppositeSignal, mediator.LastPlaceSpotOrderCommand.CloseReason);
+        Assert.Equal(TradingMode.Spot, mediator.LastPlaceSpotOrderCommand.TradingMode);
+        Assert.Equal(TradeExecutionIntent.CloseLong, mediator.LastPlaceSpotOrderCommand.ExecutionIntent);
+        Assert.Equal(TradeSignal.Sell, mediator.LastPlaceSpotOrderCommand.RawSignal);
+        Assert.True(mediator.LastPlaceSpotOrderCommand.RequiresReducedPositionSize);
     }
 
     [Theory]

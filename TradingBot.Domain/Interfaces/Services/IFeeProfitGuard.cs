@@ -18,7 +18,14 @@ public sealed class FeeProfitGuardRequest
     public decimal Quantity { get; init; }
     public decimal? EntryPrice { get; init; }
     public decimal? TargetPrice { get; init; }
+    public string? TargetSource { get; init; }
+    public decimal? ExpectedMovePercent { get; init; }
+    public decimal? RecentSwingHigh { get; init; }
+    public decimal? RecentSwingLow { get; init; }
+    public decimal? RangeOrAtrExtensionUsed { get; init; }
+    public decimal? AtrUsed { get; init; }
     public decimal? StopLossPrice { get; init; }
+    public string? Caller { get; init; }
     public bool IsProtectiveExit { get; init; }
 }
 
@@ -35,4 +42,5 @@ public sealed class FeeProfitGuardResult
     public decimal EstimatedSpreadPercent { get; init; }
     public decimal EstimatedTotalCostPercent { get; init; }
     public decimal NetExpectedProfitPercent { get; init; }
+    public string FeeRateSource { get; init; } = "UnknownFallback";
 }

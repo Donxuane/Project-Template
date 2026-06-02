@@ -18,7 +18,16 @@ public sealed class TradeExecutionRequest
     public TradingMode TradingMode { get; init; } = TradingMode.Spot;
     public TradeSignal RawSignal { get; init; } = TradeSignal.Hold;
     public TradeExecutionIntent ExecutionIntent { get; init; } = TradeExecutionIntent.None;
+    public bool RequiresReducedPositionSize { get; init; }
     public decimal? CandidatePrice { get; init; }
+    public decimal? ExpectedTargetPrice { get; init; }
+    public decimal? ExpectedMovePercent { get; init; }
+    public string? ExpectedTargetSource { get; init; }
+    public decimal? BreakoutRangeHigh { get; init; }
+    public decimal? BreakoutRangeLow { get; init; }
+    public decimal? BreakoutThresholdPrice { get; init; }
+    public decimal? ExpectedTargetStructureExtensionUsed { get; init; }
+    public decimal? ExpectedTargetAtrUsed { get; init; }
 }
 
 public sealed class TradeExecutionResult

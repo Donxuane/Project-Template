@@ -1,0 +1,20 @@
+{
+  "startedAtUtc": "2026-06-02T11:23:17.8475361Z",
+  "completedAtUtc": "2026-06-02T11:24:58.5769333Z",
+  "DataDirectory": "TradingBot.Backtest/data",
+  "OutputDirectory": "TradingBot.Backtest/output/mfe-30d-5m",
+  "Intervals": [
+    "5m"
+  ],
+  "BootstrapMissingData": true,
+  "BootstrapLimit": 1000,
+  "BootstrapDays": 30,
+  "BootstrapStartUtc": null,
+  "BootstrapEndUtc": null,
+  "FeeRatePercent": 0.1,
+  "EstimatedSpreadPercent": 0.05,
+  "SlippagePercent": 0,
+  "profileCount": 16,
+  "tradeCount": 15,
+  "blockedEntryCount": 829
+}

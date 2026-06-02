@@ -11,6 +11,7 @@ public sealed class MarketSnapshot
     public decimal? MarketDataAgeSeconds { get; init; }
     public DateTime? LatestClosedCandleOpenTimeUtc { get; init; }
     public DateTime? LatestClosedCandleCloseTimeUtc { get; init; }
+    public decimal? LatestClosedCandleAgeSeconds { get; init; }
     public decimal? LatestClosedCandleClosePrice { get; init; }
     public IReadOnlyList<decimal> HighPrices { get; init; } = [];
     public IReadOnlyList<decimal> LowPrices { get; init; } = [];

@@ -370,6 +370,57 @@ public class TradeMonitorWorkerLifecycleTests
         Assert.Equal(CloseReason.MaxDuration, mediator.LastCommand!.CloseReason);
     }
 
+    [Fact]
+    public async Task TrailingStop_WhenEnabled_ClosesWithRiskExit()
+    {
+        var position = new Position
+        {
+            Id = 1301,
+            Symbol = TradingSymbol.BNBUSDT,
+            Side = OrderSide.BUY,
+            Quantity = 0.01m,
+            AveragePrice = 600m,
+            IsOpen = true,
+            IsClosing = false,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-10),
+            OpenedAt = DateTime.UtcNow.AddMinutes(-10)
+        };
+
+        var positionRepository = new FakePositionRepository([position]);
+        var mediator = new CapturingMediator(success: true);
+        var worker = BuildWorker(
+            positionRepository,
+            new FakeOrderRepository(activeCloseOrder: false),
+            new SequencedPriceCacheService(600m, 596.5m),
+            mediator,
+            new AllowIdempotencyService(),
+            new AllowPositionExecutionGuard());
+
+        await InvokeMonitorOpenPositionsAsync(worker, (settings, settingsType) =>
+        {
+            settingsType.GetProperty("EnableStopLossExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTakeProfitExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTimeExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTrailingStop")!.SetValue(settings, true);
+            settingsType.GetProperty("TrailingStopPercent")!.SetValue(settings, 0.5m);
+        });
+
+        Assert.Equal(0, mediator.PlaceOrderCalls);
+
+        await InvokeMonitorOpenPositionsAsync(worker, (settings, settingsType) =>
+        {
+            settingsType.GetProperty("EnableStopLossExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTakeProfitExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTimeExit")!.SetValue(settings, false);
+            settingsType.GetProperty("EnableTrailingStop")!.SetValue(settings, true);
+            settingsType.GetProperty("TrailingStopPercent")!.SetValue(settings, 0.5m);
+        });
+
+        Assert.Equal(1, mediator.PlaceOrderCalls);
+        Assert.NotNull(mediator.LastCommand);
+        Assert.Equal(CloseReason.RiskExit, mediator.LastCommand!.CloseReason);
+    }
+
     [Theory]
     [InlineData(true, false, 0.01, true)]
     [InlineData(true, true, 0.01, false)]
@@ -509,8 +560,43 @@ public class TradeMonitorWorkerLifecycleTests
             => Task.CompletedTask;
     }
 
+    private sealed class SequencedPriceCacheService(params decimal[] prices) : IPriceCacheService
+    {
+        private readonly decimal[] _prices = prices.Length == 0 ? [0m] : prices;
+        private int _index;
+
+        public Task<decimal?> GetCachedPriceAsync(TradingSymbol symbol, CancellationToken cancellationToken = default)
+        {
+            var idx = Math.Min(_index, _prices.Length - 1);
+            var price = _prices[idx];
+            _index++;
+            return Task.FromResult<decimal?>(price);
+        }
+
+        public Task<PriceSnapshot?> GetCachedPriceSnapshotAsync(TradingSymbol symbol, CancellationToken cancellationToken = default)
+        {
+            var idx = Math.Min(Math.Max(0, _index - 1), _prices.Length - 1);
+            var price = _prices[idx];
+            return Task.FromResult<PriceSnapshot?>(new PriceSnapshot
+            {
+                Price = price,
+                AsOfUtc = DateTime.UtcNow,
+                Source = "RedisTicker"
+            });
+        }
+
+        public Task SetCachedPriceAsync(TradingSymbol symbol, decimal price, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+    }
+
     private sealed class AllowIdempotencyService : ITradeIdempotencyService
     {
+        public Task<bool> IsDuplicateDecisionAsync(string decisionId, int windowSeconds, CancellationToken cancellationToken = default)
+            => Task.FromResult(false);
+
+        public Task MarkDecisionExecutedAsync(string decisionId, int windowSeconds, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
         public Task<bool> TryRegisterDecisionAsync(string decisionId, int windowSeconds, CancellationToken cancellationToken = default)
             => Task.FromResult(true);
     }

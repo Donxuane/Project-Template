@@ -18,6 +18,8 @@ public static class Configuration
         services.AddScoped<TradingApi>();
         services.AddScoped<GeneralApi>();
         //Background Services
+        services.AddSingleton<IFeeProfitGuardExpectedMoveBlockObservability, FeeProfitGuardExpectedMoveBlockObservability>();
+        services.AddHostedService<FeeProfitGuardExpectedMoveBlockReportWorker>();
         services.AddHostedService<OrderSyncWorker>();
         services.AddHostedService<TradeSyncWorker>();
         services.AddHostedService<PositionWorker>();
@@ -50,7 +52,9 @@ public static class Configuration
         services.AddScoped<ITradeCooldownService, TradeCooldownService>();
         services.AddScoped<IPositionExecutionGuard, PositionExecutionGuard>();
         services.AddScoped<IFeeProfitGuard, FeeProfitGuard>();
+        services.AddScoped<ISpotCommissionRateResolver, SpotCommissionRateResolver>();
         services.AddScoped<IConfidenceGate, ConfidenceGate>();
+        services.AddScoped<ISpotPositionSizingService, SpotPositionSizingService>();
         services.AddScoped<ITradeAnalyticsService, TradeAnalyticsService>();
         services.AddScoped<IPositionAccountingService, PositionAccountingService>();
         services.AddScoped<IPositionReconciliationService, PositionReconciliationService>();

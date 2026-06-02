@@ -11,12 +11,18 @@ public class FeeProfitGuard(
     IConfiguration configuration,
     IPositionRepository positionRepository,
     IPriceCacheService priceCacheService,
+    ISpotCommissionRateResolver spotCommissionRateResolver,
+    IFeeProfitGuardExpectedMoveBlockObservability expectedMoveBlockObservability,
     ILogger<FeeProfitGuard> logger) : IFeeProfitGuard
 {
     public async Task<FeeProfitGuardResult> EvaluateAsync(FeeProfitGuardRequest request, CancellationToken cancellationToken = default)
     {
         var useFeeGuard = configuration.GetValue<bool?>("Trading:UseFeeGuard") ?? true;
-        var feeRatePercent = Math.Max(0m, configuration.GetValue<decimal?>("Trading:FeeRatePercent") ?? 0.1m);
+        var commissionResolution = await spotCommissionRateResolver.ResolveFeeRatePercentAsync(request.Symbol, cancellationToken);
+        var feeRatePercent = Math.Max(0m, commissionResolution.FeeRatePercent);
+        var feeRateSource = string.IsNullOrWhiteSpace(commissionResolution.FeeRateSource)
+            ? "UnknownFallback"
+            : commissionResolution.FeeRateSource;
         var estimatedSpreadPercent = Math.Max(0m, configuration.GetValue<decimal?>("Trading:EstimatedSpreadPercent") ?? 0.05m);
         var minExpectedMovePercent = Math.Max(0m, configuration.GetValue<decimal?>("Trading:MinExpectedMovePercent") ?? 0.3m);
         var minNetProfitPercent = Math.Max(0m, configuration.GetValue<decimal?>("Trading:MinNetProfitPercent") ?? 0.15m);
@@ -36,8 +42,10 @@ public class FeeProfitGuard(
                 0m,
                 estimatedSpreadPercent,
                 0m,
-                0m);
+                0m,
+                feeRateSource);
             LogResult(request, bypass);
+            LogSpotOpenLongEvaluationIfApplicable(request, bypass, feeRatePercent, minExpectedMovePercent, minNetProfitPercent);
             return bypass;
         }
 
@@ -54,15 +62,18 @@ public class FeeProfitGuard(
                 feeRatePercent,
                 estimatedSpreadPercent,
                 feeRatePercent + feeRatePercent + estimatedSpreadPercent,
-                0m);
+                0m,
+                feeRateSource);
             LogResult(request, futuresUnsupported);
+            LogSpotOpenLongEvaluationIfApplicable(request, futuresUnsupported, feeRatePercent, minExpectedMovePercent, minNetProfitPercent);
             return futuresUnsupported;
         }
 
         if (request.TradingMode != TradingMode.Spot)
         {
-            var unsupported = BuildResult(false, "Trading mode is not supported by fee/profit guard.", 0m, 0m, request.StopLossPrice, 0m, 0m, 0m, estimatedSpreadPercent, 0m, 0m);
+            var unsupported = BuildResult(false, "Trading mode is not supported by fee/profit guard.", 0m, 0m, request.StopLossPrice, 0m, 0m, 0m, estimatedSpreadPercent, 0m, 0m, feeRateSource);
             LogResult(request, unsupported);
+            LogSpotOpenLongEvaluationIfApplicable(request, unsupported, feeRatePercent, minExpectedMovePercent, minNetProfitPercent);
             return unsupported;
         }
 
@@ -85,8 +96,10 @@ public class FeeProfitGuard(
                     feeRatePercent,
                     estimatedSpreadPercent,
                     feeRatePercent + feeRatePercent + estimatedSpreadPercent,
-                    0m);
+                    0m,
+                    feeRateSource);
                 LogResult(request, invalid);
+                LogSpotOpenLongEvaluationIfApplicable(request, invalid, feeRatePercent, minExpectedMovePercent, minNetProfitPercent);
                 return invalid;
             }
 
@@ -109,8 +122,11 @@ public class FeeProfitGuard(
                     estimatedExitFeePercent,
                     estimatedSpreadPercent,
                     totalCost,
-                    net);
+                    net,
+                    feeRateSource);
                 LogResult(request, blocked);
+                LogSpotOpenLongEvaluationIfApplicable(request, blocked, feeRatePercent, minExpectedMovePercent, minNetProfitPercent);
+                RecordExpectedMoveBlockIfApplicable(request, blocked);
                 return blocked;
             }
 
@@ -127,8 +143,10 @@ public class FeeProfitGuard(
                     estimatedExitFeePercent,
                     estimatedSpreadPercent,
                     totalCost,
-                    net);
+                    net,
+                    feeRateSource);
                 LogResult(request, blocked);
+                LogSpotOpenLongEvaluationIfApplicable(request, blocked, feeRatePercent, minExpectedMovePercent, minNetProfitPercent);
                 return blocked;
             }
 
@@ -143,8 +161,10 @@ public class FeeProfitGuard(
                 estimatedExitFeePercent,
                 estimatedSpreadPercent,
                 totalCost,
-                net);
+                net,
+                feeRateSource);
             LogResult(request, allowed);
+            LogSpotOpenLongEvaluationIfApplicable(request, allowed, feeRatePercent, minExpectedMovePercent, minNetProfitPercent);
             return allowed;
         }
 
@@ -168,8 +188,10 @@ public class FeeProfitGuard(
                     feeRatePercent,
                     estimatedSpreadPercent,
                     feeRatePercent + estimatedSpreadPercent,
-                    0m);
+                    0m,
+                    feeRateSource);
                 LogResult(request, invalid);
+                LogSpotOpenLongEvaluationIfApplicable(request, invalid, feeRatePercent, minExpectedMovePercent, minNetProfitPercent);
                 return invalid;
             }
 
@@ -189,8 +211,10 @@ public class FeeProfitGuard(
                 estimatedExitFeePercent,
                 estimatedSpreadPercent,
                 totalCost,
-                net);
+                net,
+                feeRateSource);
             LogResult(request, allowed);
+            LogSpotOpenLongEvaluationIfApplicable(request, allowed, feeRatePercent, minExpectedMovePercent, minNetProfitPercent);
             return allowed;
         }
 
@@ -205,15 +229,17 @@ public class FeeProfitGuard(
             0m,
             estimatedSpreadPercent,
             0m,
-            0m);
+            0m,
+            feeRateSource);
         LogResult(request, passthrough);
+        LogSpotOpenLongEvaluationIfApplicable(request, passthrough, feeRatePercent, minExpectedMovePercent, minNetProfitPercent);
         return passthrough;
     }
 
     private void LogResult(FeeProfitGuardRequest request, FeeProfitGuardResult result)
     {
         logger.LogInformation(
-            "FeeProfitGuard evaluated: Symbol={Symbol}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, Side={Side}, Quantity={Quantity}, EntryPrice={EntryPrice}, TargetPrice={TargetPrice}, StopLossPrice={StopLossPrice}, GrossExpectedProfitPercent={GrossExpectedProfitPercent}, EstimatedEntryFeePercent={EstimatedEntryFeePercent}, EstimatedExitFeePercent={EstimatedExitFeePercent}, EstimatedSpreadPercent={EstimatedSpreadPercent}, EstimatedTotalCostPercent={EstimatedTotalCostPercent}, NetExpectedProfitPercent={NetExpectedProfitPercent}, Allowed={Allowed}, Reason={Reason}",
+            "FeeProfitGuard evaluated: Symbol={Symbol}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, Side={Side}, Quantity={Quantity}, EntryPrice={EntryPrice}, TargetPrice={TargetPrice}, StopLossPrice={StopLossPrice}, GrossExpectedProfitPercent={GrossExpectedProfitPercent}, EstimatedEntryFeePercent={EstimatedEntryFeePercent}, EstimatedExitFeePercent={EstimatedExitFeePercent}, EstimatedSpreadPercent={EstimatedSpreadPercent}, EstimatedTotalCostPercent={EstimatedTotalCostPercent}, NetExpectedProfitPercent={NetExpectedProfitPercent}, FeeRateSource={FeeRateSource}, Allowed={Allowed}, Reason={Reason}",
             request.Symbol,
             request.TradingMode,
             request.ExecutionIntent,
@@ -228,8 +254,101 @@ public class FeeProfitGuard(
             result.EstimatedSpreadPercent,
             result.EstimatedTotalCostPercent,
             result.NetExpectedProfitPercent,
+            result.FeeRateSource,
             result.IsAllowed,
             result.Reason);
+    }
+
+    private void LogSpotOpenLongEvaluationIfApplicable(
+        FeeProfitGuardRequest request,
+        FeeProfitGuardResult result,
+        decimal feeRatePercent,
+        decimal minExpectedMovePercent,
+        decimal minNetProfitPercent)
+    {
+        if (request.TradingMode != TradingMode.Spot || request.ExecutionIntent != TradeExecutionIntent.OpenLong)
+            return;
+
+        var targetSource = string.IsNullOrWhiteSpace(request.TargetSource)
+            ? "Unknown"
+            : request.TargetSource;
+        var caller = string.IsNullOrWhiteSpace(request.Caller)
+            ? "Unknown"
+            : request.Caller;
+        var rejectionReason = result.IsAllowed ? "None" : result.Reason;
+        var outcome = result.IsAllowed ? "Allowed" : "Blocked";
+
+        logger.LogInformation(
+            "FeeProfitGuard Spot OpenLong evaluation {Outcome}: Symbol={Symbol}, EntryPrice={EntryPrice}, TargetPrice={TargetPrice}, ExpectedTargetPrice={ExpectedTargetPrice}, ExpectedMovePercent={ExpectedMovePercent}, ExpectedTargetSource={ExpectedTargetSource}, RecentSwingHigh={RecentSwingHigh}, RecentSwingLow={RecentSwingLow}, RangeOrAtrExtensionUsed={RangeOrAtrExtensionUsed}, AtrUsed={AtrUsed}, TargetSource={TargetSource}, GrossExpectedMovePercent={GrossExpectedMovePercent}, FeeRatePercent={FeeRatePercent}, FeeRateSource={FeeRateSource}, EstimatedSpreadPercent={EstimatedSpreadPercent}, SpreadPercent={SpreadPercent}, EstimatedRoundTripCostPercent={EstimatedRoundTripCostPercent}, MinExpectedMovePercent={MinExpectedMovePercent}, MinNetProfitPercent={MinNetProfitPercent}, ExpectedNetProfitPercent={ExpectedNetProfitPercent}, Allowed={Allowed}, RejectionReason={RejectionReason}, Caller={Caller}",
+            outcome,
+            request.Symbol,
+            result.EntryPrice,
+            result.TargetPrice,
+            request.TargetPrice,
+            request.ExpectedMovePercent,
+            targetSource,
+            request.RecentSwingHigh,
+            request.RecentSwingLow,
+            request.RangeOrAtrExtensionUsed,
+            request.AtrUsed,
+            targetSource,
+            result.GrossExpectedProfitPercent,
+            feeRatePercent,
+            result.FeeRateSource,
+            result.EstimatedSpreadPercent,
+            result.EstimatedSpreadPercent,
+            result.EstimatedTotalCostPercent,
+            minExpectedMovePercent,
+            minNetProfitPercent,
+            result.NetExpectedProfitPercent,
+            result.IsAllowed,
+            rejectionReason,
+            caller);
+
+        if (!result.IsAllowed)
+        {
+            logger.LogInformation(
+                "Spot OpenLong candidate rejected: Symbol={Symbol}, EntryPrice={EntryPrice}, ExpectedTargetPrice={ExpectedTargetPrice}, ExpectedMovePercent={ExpectedMovePercent}, ExpectedTargetSource={ExpectedTargetSource}, RecentSwingHigh={RecentSwingHigh}, RecentSwingLow={RecentSwingLow}, RangeOrAtrExtensionUsed={RangeOrAtrExtensionUsed}, AtrUsed={AtrUsed}, MinExpectedMovePercent={MinExpectedMovePercent}, MinNetProfitPercent={MinNetProfitPercent}, FeeRatePercent={FeeRatePercent}, SpreadPercent={SpreadPercent}, GrossExpectedMovePercent={GrossExpectedMovePercent}, ExpectedNetProfitPercent={ExpectedNetProfitPercent}, RejectionReason={RejectionReason}, Caller={Caller}",
+                request.Symbol,
+                result.EntryPrice,
+                request.TargetPrice,
+                request.ExpectedMovePercent,
+                targetSource,
+                request.RecentSwingHigh,
+                request.RecentSwingLow,
+                request.RangeOrAtrExtensionUsed,
+                request.AtrUsed,
+                minExpectedMovePercent,
+                minNetProfitPercent,
+                feeRatePercent,
+                result.EstimatedSpreadPercent,
+                result.GrossExpectedProfitPercent,
+                result.NetExpectedProfitPercent,
+                rejectionReason,
+                caller);
+        }
+    }
+
+    private void RecordExpectedMoveBlockIfApplicable(FeeProfitGuardRequest request, FeeProfitGuardResult result)
+    {
+        if (request.TradingMode != TradingMode.Spot || request.ExecutionIntent != TradeExecutionIntent.OpenLong || result.IsAllowed)
+            return;
+
+        if (!string.Equals(
+                result.Reason,
+                "Skipped because expected gross move is below minimum threshold.",
+                StringComparison.Ordinal))
+            return;
+
+        expectedMoveBlockObservability.RecordExpectedMoveBlock(new FeeProfitGuardExpectedMoveBlockObservation
+        {
+            Symbol = request.Symbol,
+            ExpectedMovePercent = request.ExpectedMovePercent ?? result.GrossExpectedProfitPercent,
+            ExpectedNetProfitPercent = result.NetExpectedProfitPercent,
+            ExpectedTargetSource = string.IsNullOrWhiteSpace(request.TargetSource) ? "Unknown" : request.TargetSource,
+            Confidence = null,
+            RejectionReason = result.Reason
+        });
     }
 
     private static FeeProfitGuardResult BuildResult(
@@ -243,7 +362,8 @@ public class FeeProfitGuard(
         decimal exitFee,
         decimal spread,
         decimal totalCost,
-        decimal net)
+        decimal net,
+        string feeRateSource)
     {
         return new FeeProfitGuardResult
         {
@@ -257,7 +377,8 @@ public class FeeProfitGuard(
             EstimatedExitFeePercent = exitFee,
             EstimatedSpreadPercent = spread,
             EstimatedTotalCostPercent = totalCost,
-            NetExpectedProfitPercent = net
+            NetExpectedProfitPercent = net,
+            FeeRateSource = feeRateSource
         };
     }
 }

@@ -12,4 +12,6 @@ public sealed class DecisionResult
     public string Reason { get; init; } = string.Empty;
     public TradeCandidate? Candidate { get; init; }
     public decimal Confidence { get; init; } = 1.0m;
+    public int? TrendConfidenceScore { get; init; }
+    public int? MarketConditionScore { get; init; }
 }

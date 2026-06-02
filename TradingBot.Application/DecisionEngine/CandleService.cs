@@ -77,7 +77,11 @@ public class CandleService(
             candles = buffer.Candles.ToArray();
         }
 
+        var snapshotTimestampUtc = DateTime.UtcNow;
         var latestClosedCandle = ResolveLatestClosedCandle(candles);
+        var latestClosedCandleAgeSeconds = latestClosedCandle is null
+            ? (decimal?)null
+            : Math.Max(0m, (decimal)(snapshotTimestampUtc - latestClosedCandle.CloseTimeUtc).TotalSeconds);
         var fallbackPrice = latestClosedCandle?.Close ?? candles[^1].Close;
         var currentPrice = await GetCurrentPriceAsync(symbol, fallbackPrice, latestClosedCandle?.CloseTimeUtc, cancellationToken);
         if (count < requiredCandles)
@@ -96,12 +100,13 @@ public class CandleService(
             MarketDataAgeSeconds = currentPrice.AgeSeconds,
             LatestClosedCandleOpenTimeUtc = latestClosedCandle?.OpenTimeUtc,
             LatestClosedCandleCloseTimeUtc = latestClosedCandle?.CloseTimeUtc,
+            LatestClosedCandleAgeSeconds = latestClosedCandleAgeSeconds,
             LatestClosedCandleClosePrice = latestClosedCandle?.Close,
             HighPrices = candles.Select(c => c.High).ToArray(),
             LowPrices = candles.Select(c => c.Low).ToArray(),
             ClosePrices = candles.Select(c => c.Close).ToArray(),
             Volumes = candles.Select(c => c.Volume).ToArray(),
-            TimestampUtc = DateTime.UtcNow
+            TimestampUtc = snapshotTimestampUtc
         };
     }
 

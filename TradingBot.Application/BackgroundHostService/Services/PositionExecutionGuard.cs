@@ -15,6 +15,11 @@ public class PositionExecutionGuard(
     ILogger<PositionExecutionGuard> logger) : IPositionExecutionGuard
 {
     private readonly TradingRuntimeSettings _trading = RuntimeTradingConfigResolver.ResolveTrading(configuration);
+    private readonly OpenLongCircuitBreakerSettings _openLongCircuitBreaker = new(
+        configuration.GetValue<bool?>("Trading:OpenLongCircuitBreaker:Enabled") ?? false,
+        Math.Max(1, configuration.GetValue<int?>("Trading:OpenLongCircuitBreaker:LookbackHours") ?? 24),
+        Math.Max(1, configuration.GetValue<int?>("Trading:OpenLongCircuitBreaker:MaxConsecutiveRealizedLosingTrades") ?? 3),
+        Math.Max(0m, configuration.GetValue<decimal?>("Trading:OpenLongCircuitBreaker:SessionRealizedLossLimitQuote") ?? 1.00m));
 
     public async Task<PositionExecutionGuardResult> EvaluateAsync(PositionExecutionGuardRequest request, CancellationToken cancellationToken = default)
     {
@@ -42,6 +47,10 @@ public class PositionExecutionGuard(
                 blocked = "Execution skipped - close order already in-flight for position.";
             }
         }
+        if (string.IsNullOrWhiteSpace(blocked))
+        {
+            blocked = await EvaluateOpenLongCircuitBreakerBlockReasonAsync(request, cancellationToken);
+        }
 
         var allowed = string.IsNullOrWhiteSpace(blocked);
         var reason = allowed ? "Position execution guard passed." : blocked!;
@@ -67,6 +76,72 @@ public class PositionExecutionGuard(
             Reason = reason,
             OpenPositionQuantity = openQuantity
         };
+    }
+
+    private async Task<string?> EvaluateOpenLongCircuitBreakerBlockReasonAsync(
+        PositionExecutionGuardRequest request,
+        CancellationToken cancellationToken)
+    {
+        var isSpotOpenLong = request.TradingMode == TradingMode.Spot
+                             && request.ExecutionIntent == TradeExecutionIntent.OpenLong
+                             && request.RequestedSide == OrderSide.BUY;
+        if (!isSpotOpenLong || !_openLongCircuitBreaker.Enabled)
+            return null;
+
+        var closedPositions = await positionRepository.GetClosedPositionsAsync(cancellationToken);
+        var lookbackStartUtc = DateTime.UtcNow.AddHours(-_openLongCircuitBreaker.LookbackHours);
+        var positionsInWindow = closedPositions
+            .Where(p => ResolveClosedAtUtc(p) >= lookbackStartUtc)
+            .OrderByDescending(ResolveClosedAtUtc)
+            .ToList();
+
+        var consecutiveLosses = 0;
+        foreach (var position in positionsInWindow)
+        {
+            if (position.RealizedPnl < 0m)
+            {
+                consecutiveLosses++;
+                continue;
+            }
+
+            break;
+        }
+
+        var sessionRealizedPnl = positionsInWindow.Sum(p => p.RealizedPnl);
+        string? blockedReason = null;
+        if (consecutiveLosses >= _openLongCircuitBreaker.MaxConsecutiveRealizedLosingTrades)
+        {
+            blockedReason = "OpenLong blocked by circuit breaker due to consecutive realized losses.";
+        }
+        else if (_openLongCircuitBreaker.SessionRealizedLossLimitQuote > 0m
+                 && sessionRealizedPnl <= -_openLongCircuitBreaker.SessionRealizedLossLimitQuote)
+        {
+            blockedReason = "OpenLong blocked by circuit breaker due to session realized loss limit.";
+        }
+
+        if (blockedReason is null)
+            return null;
+
+        logger.LogWarning(
+            "OpenLong circuit breaker blocked entry: Symbol={Symbol}, Enabled={Enabled}, LookbackHours={LookbackHours}, ConsecutiveLosses={ConsecutiveLosses}, MaxConsecutiveRealizedLosingTrades={MaxConsecutiveRealizedLosingTrades}, SessionRealizedPnl={SessionRealizedPnl}, SessionRealizedLossLimitQuote={SessionRealizedLossLimitQuote}, BlockedReason={BlockedReason}",
+            request.Symbol,
+            _openLongCircuitBreaker.Enabled,
+            _openLongCircuitBreaker.LookbackHours,
+            consecutiveLosses,
+            _openLongCircuitBreaker.MaxConsecutiveRealizedLosingTrades,
+            sessionRealizedPnl,
+            _openLongCircuitBreaker.SessionRealizedLossLimitQuote,
+            blockedReason);
+
+        return blockedReason;
+    }
+
+    private static DateTime ResolveClosedAtUtc(Domain.Models.Trading.Position position)
+    {
+        if (position.ClosedAt.HasValue)
+            return position.ClosedAt.Value;
+
+        return position.UpdatedAt != default ? position.UpdatedAt : position.CreatedAt;
     }
 
     private static string? EvaluateBlockReason(
@@ -109,4 +184,10 @@ public class PositionExecutionGuard(
 
         return "Execution skipped because execution intent is not supported by the current spot execution pipeline.";
     }
+
+    private sealed record OpenLongCircuitBreakerSettings(
+        bool Enabled,
+        int LookbackHours,
+        int MaxConsecutiveRealizedLosingTrades,
+        decimal SessionRealizedLossLimitQuote);
 }

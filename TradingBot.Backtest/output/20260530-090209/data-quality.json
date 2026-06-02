@@ -1,0 +1,17 @@
+[
+  {
+    "Symbol": 2,
+    "Severity": "info",
+    "Message": "No 1m gaps detected."
+  },
+  {
+    "Symbol": 3,
+    "Severity": "info",
+    "Message": "No 1m gaps detected."
+  },
+  {
+    "Symbol": 5,
+    "Severity": "info",
+    "Message": "No 1m gaps detected."
+  }
+]

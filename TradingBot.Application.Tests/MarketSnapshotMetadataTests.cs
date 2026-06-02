@@ -21,6 +21,7 @@ public class MarketSnapshotMetadataTests
             MarketDataAgeSeconds = 4m,
             LatestClosedCandleOpenTimeUtc = latestClosedOpen,
             LatestClosedCandleCloseTimeUtc = latestClosedClose,
+            LatestClosedCandleAgeSeconds = 4m,
             LatestClosedCandleClosePrice = 2499m,
             ClosePrices = [2490m, 2495m, 2500m]
         };
@@ -30,6 +31,7 @@ public class MarketSnapshotMetadataTests
         Assert.Equal(4m, snapshot.MarketDataAgeSeconds);
         Assert.Equal(latestClosedOpen, snapshot.LatestClosedCandleOpenTimeUtc);
         Assert.Equal(latestClosedClose, snapshot.LatestClosedCandleCloseTimeUtc);
+        Assert.Equal(4m, snapshot.LatestClosedCandleAgeSeconds);
         Assert.Equal(2499m, snapshot.LatestClosedCandleClosePrice);
     }
 }

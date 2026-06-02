@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TradingBot.Application\TradingBot.Application.csproj" />
+    <ProjectReference Include="..\TradingBot.Domain\TradingBot.Domain.csproj" />
+    <ProjectReference Include="..\TradingBot.Shared\TradingBot.Shared.csproj" />
+  </ItemGroup>
+</Project>

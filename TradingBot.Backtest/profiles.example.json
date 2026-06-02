@@ -1,0 +1,15 @@
+[
+  {
+    "profileName": "strict-current-ETH+BNB",
+    "symbols": [ "ETHUSDT", "BNBUSDT" ],
+    "overrides": {}
+  },
+  {
+    "profileName": "pullback-rr-1.00-ETH+BNB+SOL",
+    "symbols": [ "ETHUSDT", "BNBUSDT", "SOLUSDT" ],
+    "overrides": {
+      "DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackContinuationOverride": "true",
+      "DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackMinExpectedRewardRisk": "1.00"
+    }
+  }
+]

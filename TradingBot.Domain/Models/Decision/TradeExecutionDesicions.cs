@@ -29,6 +29,22 @@ public class TradeExecutionDecisions
     public string? RiskReason { get; set; }
     public decimal? StopLossPrice { get; set; }
     public decimal? TakeProfitPrice { get; set; }
+    public decimal? ExpectedMovePercent { get; set; }
+    public decimal? ExpectedTargetPrice { get; set; }
+    public string? ExpectedTargetSource { get; set; }
+    public int? TrendConfidenceScore { get; set; }
+    public int? MarketConditionScore { get; set; }
+    public string? VolatilityRegime { get; set; }
+    public bool? RequiresReducedPositionSize { get; set; }
+    public int? ConsecutiveBullishTrendCandles { get; set; }
+    public bool? CurrentCloseAboveRecentHigh { get; set; }
+    public decimal? DistanceToInvalidationPercent { get; set; }
+    public bool? PreviousCandleBearish { get; set; }
+    public bool? EntryNearRecentHigh { get; set; }
+    public decimal? ShortMaSlopePercent { get; set; }
+    public decimal? TrendStrengthPercent { get; set; }
+    public string? ProjectionMode { get; set; }
+    public decimal? ProjectedExtension { get; set; }
     public bool? ExecutionSuccess { get; set; } = false;
     public long? LocalOrderId { get; set; }
     public long? ExchangeOrderId { get; set; }

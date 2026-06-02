@@ -15,7 +15,19 @@ public record PlaceSpotOrderCommand(
     CloseReason CloseReason = CloseReason.None,
     long? ParentPositionId = null,
     string? CorrelationId = null,
-    decimal? CandidatePrice = null
+    decimal? CandidatePrice = null,
+    TradingMode? TradingMode = null,
+    TradeExecutionIntent? ExecutionIntent = null,
+    TradeSignal? RawSignal = null,
+    bool? RequiresReducedPositionSize = null,
+    decimal? ExpectedTargetPrice = null,
+    decimal? ExpectedMovePercent = null,
+    string? ExpectedTargetSource = null,
+    decimal? BreakoutRangeHigh = null,
+    decimal? BreakoutRangeLow = null,
+    decimal? BreakoutThresholdPrice = null,
+    decimal? ExpectedTargetStructureExtensionUsed = null,
+    decimal? ExpectedTargetAtrUsed = null
 ) : IRequest<PlaceSpotOrderResult>;
 
 public sealed class PlaceSpotOrderResult

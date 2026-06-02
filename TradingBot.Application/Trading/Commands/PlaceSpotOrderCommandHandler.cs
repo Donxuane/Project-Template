@@ -1,6 +1,8 @@
 using System.Globalization;
 using MediatR;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using TradingBot.Application.BackgroundHostService;
 using TradingBot.Application.Trading.Commands;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
@@ -22,9 +24,11 @@ public class PlaceSpotOrderCommandHandler(
     IOrderStatusService orderStatusService,
     ITradeCooldownService tradeCooldownService,
     IRiskManagementService riskManagementService,
+    IFeeProfitGuard feeProfitGuard,
     IBinanceOrderNormalizationService binanceOrderNormalizationService,
     ITimeSyncService timeSyncService,
     IPriceCacheService priceCacheService,
+    IConfiguration configuration,
     ILogger<PlaceSpotOrderCommandHandler> logger) : IRequestHandler<PlaceSpotOrderCommand, PlaceSpotOrderResult>
 {
     public async Task<PlaceSpotOrderResult> Handle(PlaceSpotOrderCommand request, CancellationToken cancellationToken)
@@ -112,16 +116,23 @@ public class PlaceSpotOrderCommandHandler(
                 };
             }
 
+            var resolvedTradingMode = request.TradingMode ?? TradingMode.Spot;
+            var executionIntent = request.ExecutionIntent ?? (request.Side == OrderSide.BUY
+                ? TradeExecutionIntent.OpenLong
+                : TradeExecutionIntent.CloseLong);
+            var resolvedRawSignal = request.RawSignal ?? (request.Side == OrderSide.BUY ? TradeSignal.Buy : TradeSignal.Sell);
+            var resolvedRequiresReducedPositionSize = request.RequiresReducedPositionSize ?? false;
+
             var riskResult = await riskManagementService.CheckOrderAsync(
                 request.Symbol,
                 request.Side,
                 normalizedRequest.Quantity.Value,
                 normalizedOrder.EffectivePrice ?? price,
                 cancellationToken,
-                requiresReducedPositionSize: false,
-                tradingMode: TradingMode.Spot,
-                rawSignal: TradeSignal.Hold,
-                executionIntent: request.Side == OrderSide.BUY ? TradeExecutionIntent.OpenLong : TradeExecutionIntent.CloseLong);
+                requiresReducedPositionSize: resolvedRequiresReducedPositionSize,
+                tradingMode: resolvedTradingMode,
+                rawSignal: resolvedRawSignal,
+                executionIntent: executionIntent);
             if (!riskResult.IsAllowed)
             {
                 return new PlaceSpotOrderResult
@@ -129,6 +140,117 @@ public class PlaceSpotOrderCommandHandler(
                     Success = false,
                     Error = riskResult.Reason
                 };
+            }
+            var isSpotOpenLongEntry = resolvedTradingMode == TradingMode.Spot
+                                      && executionIntent == TradeExecutionIntent.OpenLong
+                                      && request.Side == OrderSide.BUY;
+            if (isSpotOpenLongEntry)
+            {
+                var hasStrategyExpectedTarget = request.ExpectedTargetPrice.HasValue && request.ExpectedTargetPrice.Value > 0m;
+                var requireStrategyExpectedTarget = configuration.GetValue<bool?>("Trading:RequireStrategyExpectedTargetForSpotOpenLong") ?? false;
+                var isNormalTrendTarget = string.Equals(
+                    request.ExpectedTargetSource,
+                    "MovingAverageTrendStrategy.NormalTrendExpectedTarget",
+                    StringComparison.Ordinal);
+                var resolvedTargetPrice = hasStrategyExpectedTarget
+                    ? request.ExpectedTargetPrice
+                    : riskResult.TakeProfitPrice;
+                var resolvedTargetSource = hasStrategyExpectedTarget
+                    ? request.ExpectedTargetSource ?? "StrategyExpectedTarget"
+                    : "RiskManagementService.TakeProfitPrice";
+                var fallbackTargetUsed = !hasStrategyExpectedTarget;
+
+                logger.LogInformation(
+                    "Spot OpenLong expected target resolution: Symbol={Symbol}, ExpectedTargetPrice={ExpectedTargetPrice}, ExpectedMovePercent={ExpectedMovePercent}, ExpectedTargetSource={ExpectedTargetSource}, NormalTrendExpectedTargetPrice={NormalTrendExpectedTargetPrice}, NormalTrendExpectedMovePercent={NormalTrendExpectedMovePercent}, NormalTrendTargetSource={NormalTrendTargetSource}, BreakoutRangeHigh={BreakoutRangeHigh}, BreakoutRangeLow={BreakoutRangeLow}, BreakoutThresholdPrice={BreakoutThresholdPrice}, RiskTakeProfitPrice={RiskTakeProfitPrice}, ResolvedTargetPrice={ResolvedTargetPrice}, ResolvedTargetSource={ResolvedTargetSource}, RequireStrategyExpectedTargetForSpotOpenLong={RequireStrategyExpectedTargetForSpotOpenLong}, FallbackTargetUsed={FallbackTargetUsed}",
+                    request.Symbol,
+                    request.ExpectedTargetPrice,
+                    request.ExpectedMovePercent,
+                    request.ExpectedTargetSource,
+                    isNormalTrendTarget ? request.ExpectedTargetPrice : null,
+                    isNormalTrendTarget ? request.ExpectedMovePercent : null,
+                    isNormalTrendTarget ? request.ExpectedTargetSource : null,
+                    request.BreakoutRangeHigh,
+                    request.BreakoutRangeLow,
+                    request.BreakoutThresholdPrice,
+                    riskResult.TakeProfitPrice,
+                    resolvedTargetPrice,
+                    resolvedTargetSource,
+                    requireStrategyExpectedTarget,
+                    fallbackTargetUsed);
+
+                if (requireStrategyExpectedTarget && !hasStrategyExpectedTarget)
+                {
+                    logger.LogInformation(
+                        "Spot OpenLong candidate rejected: Symbol={Symbol}, EntryPrice={EntryPrice}, ExpectedTargetPrice={ExpectedTargetPrice}, ExpectedMovePercent={ExpectedMovePercent}, ExpectedTargetSource={ExpectedTargetSource}, RecentSwingHigh={RecentSwingHigh}, RecentSwingLow={RecentSwingLow}, RangeOrAtrExtensionUsed={RangeOrAtrExtensionUsed}, AtrUsed={AtrUsed}, MinExpectedMovePercent={MinExpectedMovePercent}, MinNetProfitPercent={MinNetProfitPercent}, FeeRatePercent={FeeRatePercent}, SpreadPercent={SpreadPercent}, RejectionReason={RejectionReason}",
+                        request.Symbol,
+                        normalizedOrder.EffectivePrice ?? price,
+                        request.ExpectedTargetPrice,
+                        request.ExpectedMovePercent,
+                        request.ExpectedTargetSource,
+                        request.BreakoutRangeHigh,
+                        request.BreakoutRangeLow,
+                        request.ExpectedTargetStructureExtensionUsed,
+                        request.ExpectedTargetAtrUsed,
+                        configuration.GetValue<decimal?>("Trading:MinExpectedMovePercent") ?? 0.3m,
+                        configuration.GetValue<decimal?>("Trading:MinNetProfitPercent") ?? 0.15m,
+                        configuration.GetValue<decimal?>("Trading:FeeRatePercent") ?? 0.1m,
+                        configuration.GetValue<decimal?>("Trading:EstimatedSpreadPercent") ?? 0.05m,
+                        "Spot OpenLong blocked: strategy expected target is required and missing.");
+                    return new PlaceSpotOrderResult
+                    {
+                        Success = false,
+                        Error = "Spot OpenLong blocked: strategy expected target is required and missing."
+                    };
+                }
+
+                var feeGuardResult = await feeProfitGuard.EvaluateAsync(
+                    new FeeProfitGuardRequest
+                    {
+                        Symbol = request.Symbol,
+                        TradingMode = resolvedTradingMode,
+                        RawSignal = resolvedRawSignal,
+                        ExecutionIntent = executionIntent,
+                        Side = request.Side,
+                        Quantity = normalizedRequest.Quantity.Value,
+                        EntryPrice = normalizedOrder.EffectivePrice ?? price,
+                        TargetPrice = resolvedTargetPrice,
+                        TargetSource = resolvedTargetSource,
+                        ExpectedMovePercent = request.ExpectedMovePercent,
+                        RecentSwingHigh = request.BreakoutRangeHigh,
+                        RecentSwingLow = request.BreakoutRangeLow,
+                        RangeOrAtrExtensionUsed = request.ExpectedTargetStructureExtensionUsed,
+                        AtrUsed = request.ExpectedTargetAtrUsed,
+                        StopLossPrice = riskResult.StopLossPrice,
+                        Caller = ResolveCaller(request.OrderSource),
+                        IsProtectiveExit = false
+                    },
+                    cancellationToken);
+                if (!feeGuardResult.IsAllowed)
+                {
+                    logger.LogInformation(
+                        "Spot OpenLong candidate rejected: Symbol={Symbol}, EntryPrice={EntryPrice}, ExpectedTargetPrice={ExpectedTargetPrice}, ExpectedMovePercent={ExpectedMovePercent}, ExpectedTargetSource={ExpectedTargetSource}, RecentSwingHigh={RecentSwingHigh}, RecentSwingLow={RecentSwingLow}, RangeOrAtrExtensionUsed={RangeOrAtrExtensionUsed}, AtrUsed={AtrUsed}, MinExpectedMovePercent={MinExpectedMovePercent}, MinNetProfitPercent={MinNetProfitPercent}, FeeRatePercent={FeeRatePercent}, SpreadPercent={SpreadPercent}, GrossExpectedMovePercent={GrossExpectedMovePercent}, ExpectedNetProfitPercent={ExpectedNetProfitPercent}, RejectionReason={RejectionReason}",
+                        request.Symbol,
+                        feeGuardResult.EntryPrice,
+                        request.ExpectedTargetPrice ?? resolvedTargetPrice,
+                        request.ExpectedMovePercent,
+                        request.ExpectedTargetSource ?? resolvedTargetSource,
+                        request.BreakoutRangeHigh,
+                        request.BreakoutRangeLow,
+                        request.ExpectedTargetStructureExtensionUsed,
+                        request.ExpectedTargetAtrUsed,
+                        configuration.GetValue<decimal?>("Trading:MinExpectedMovePercent") ?? 0.3m,
+                        configuration.GetValue<decimal?>("Trading:MinNetProfitPercent") ?? 0.15m,
+                        feeGuardResult.EstimatedEntryFeePercent,
+                        feeGuardResult.EstimatedSpreadPercent,
+                        feeGuardResult.GrossExpectedProfitPercent,
+                        feeGuardResult.NetExpectedProfitPercent,
+                        feeGuardResult.Reason);
+                    return new PlaceSpotOrderResult
+                    {
+                        Success = false,
+                        Error = feeGuardResult.Reason
+                    };
+                }
             }
 
             var finalQueryParameters = BinanceRequestQueryBuilder.BuildRequestDictionary(normalizedRequest);
@@ -144,8 +266,8 @@ public class PlaceSpotOrderCommandHandler(
                 request.CloseReason,
                 resolvedParentPositionId,
                 request.CorrelationId,
-                TradingMode.Spot,
-                request.Side == OrderSide.BUY ? TradeExecutionIntent.OpenLong : TradeExecutionIntent.CloseLong,
+                resolvedTradingMode,
+                executionIntent,
                 request.CandidatePrice,
                 normalizedOrder.OriginalQuantity,
                 normalizedOrder.NormalizedQuantity,
@@ -236,8 +358,8 @@ public class PlaceSpotOrderCommandHandler(
                 request.Symbol,
                 request.Side,
                 order.Quantity,
-                TradingMode.Spot,
-                request.Side == OrderSide.BUY ? TradeExecutionIntent.OpenLong : TradeExecutionIntent.CloseLong,
+                resolvedTradingMode,
+                executionIntent,
                 order.Id,
                 order.ExchangeOrderId);
 
@@ -306,6 +428,19 @@ public class PlaceSpotOrderCommandHandler(
         return side == OrderSide.BUY
             ? ((fillVwap - candidatePrice) / candidatePrice) * 100m
             : ((candidatePrice - fillVwap) / candidatePrice) * 100m;
+    }
+
+    private static string ResolveCaller(OrderSource source)
+    {
+        return source switch
+        {
+            OrderSource.DecisionWorker => nameof(DecisionWorker),
+            OrderSource.TradeMonitorWorker => nameof(TradeMonitorWorker),
+            OrderSource.Api => "ManualApi",
+            OrderSource.Manual => "ManualApi",
+            OrderSource.PositionReconciliationWorker => nameof(PositionReconciliationWorker),
+            _ => nameof(PlaceSpotOrderCommandHandler)
+        };
     }
 }
 

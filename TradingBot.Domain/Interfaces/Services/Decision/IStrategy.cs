@@ -5,5 +5,8 @@ namespace TradingBot.Domain.Interfaces.Services.Decision;
 public interface IStrategy
 {
     int RequiredPeriods { get; }
-    Task<StrategySignalResult> GenerateSignalAsync(MarketSnapshot marketData, CancellationToken cancellationToken = default);
+    Task<StrategySignalResult> GenerateSignalAsync(
+        MarketSnapshot marketData,
+        CancellationToken cancellationToken = default,
+        bool allowStateMutation = true);
 }

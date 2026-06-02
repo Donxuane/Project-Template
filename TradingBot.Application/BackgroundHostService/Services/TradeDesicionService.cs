@@ -15,9 +15,13 @@ public class TradeDecisionService(
     private readonly TradingSymbol _defaultSymbol = GetDefaultSymbol(configuration);
     private readonly decimal _defaultQuantity = GetDefaultQuantity(configuration);
 
-    public async Task<DecisionResult> MakeDecision(TradingSymbol symbol, decimal quantity, CancellationToken cancellationToken = default)
+    public async Task<DecisionResult> MakeDecision(
+        TradingSymbol symbol,
+        decimal quantity,
+        CancellationToken cancellationToken = default,
+        bool allowStateMutation = true)
     {
-        var result = await decisionService.DecideAsync(symbol, quantity, cancellationToken);
+        var result = await decisionService.DecideAsync(symbol, quantity, cancellationToken, allowStateMutation);
         var finalResult = NormalizeResultConfidence(result);
 
         logger.LogInformation(

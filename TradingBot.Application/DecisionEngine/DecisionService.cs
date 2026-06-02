@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
+using System.Diagnostics;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
 using TradingBot.Domain.Interfaces.Repositories;
@@ -21,13 +22,18 @@ public class DecisionService(
     ILogger<DecisionService> logger) : IDecisionService
 {
     private const decimal ReducedPositionSizeFactor = 0.5m;
+    private const string MarketSnapshotSource = "CandleServiceSnapshot";
     private readonly DecisionEngineRuntimeSettings _decisionSettings = RuntimeTradingConfigResolver.ResolveDecisionEngine(configuration);
     private readonly TradingRuntimeSettings _tradingSettings = RuntimeTradingConfigResolver.ResolveTrading(configuration);
     private readonly bool _useAiValidator = configuration.GetValue<bool?>("DecisionEngine:UseAIValidator") ?? false;
     private decimal MinimumSignalConfidence => Math.Max(0m, _decisionSettings.MinimumSignalConfidence);
     private TradingMode RuntimeTradingMode => Enum.TryParse<TradingMode>(_tradingSettings.Mode, true, out var mode) ? mode : TradingMode.Spot;
 
-    public async Task<DecisionResult> DecideAsync(TradingSymbol symbol, decimal quantity, CancellationToken cancellationToken = default)
+    public async Task<DecisionResult> DecideAsync(
+        TradingSymbol symbol,
+        decimal quantity,
+        CancellationToken cancellationToken = default,
+        bool allowStateMutation = true)
     {
         if (quantity <= 0)
         {
@@ -61,7 +67,10 @@ public class DecisionService(
         var persistedOpenPosition = await positionRepository.GetOpenPositionAsync(symbol, cancellationToken);
         ReconcileStrategyPositionState(symbol, persistedOpenPosition);
 
-        var signal = await strategy.GenerateSignalAsync(marketData, cancellationToken);
+        var strategyTimer = Stopwatch.StartNew();
+        var signal = await strategy.GenerateSignalAsync(marketData, cancellationToken, allowStateMutation);
+        strategyTimer.Stop();
+        var strategyElapsedMs = strategyTimer.ElapsedMilliseconds;
         var strategyName = string.IsNullOrWhiteSpace(signal.StrategyName)
             ? strategy.GetType().Name
             : signal.StrategyName;
@@ -82,8 +91,10 @@ public class DecisionService(
                 TradingMode = RuntimeTradingMode,
                 ExecutionIntent = executionIntent,
                 Reason = signal.Reason,
-                Confidence = signal.Confidence
-            });
+                Confidence = signal.Confidence,
+                TrendConfidenceScore = signal.TrendConfidenceScore,
+                MarketConditionScore = signal.MarketConditionScore
+            }, marketData, strategyElapsedMs);
         }
 
         if (signal.Signal != TradeSignal.Buy && signal.Signal != TradeSignal.Sell)
@@ -96,8 +107,10 @@ public class DecisionService(
                 TradingMode = RuntimeTradingMode,
                 ExecutionIntent = executionIntent,
                 Reason = "Signal rejected - unsupported trade signal.",
-                Confidence = signal.Confidence
-            });
+                Confidence = signal.Confidence,
+                TrendConfidenceScore = signal.TrendConfidenceScore,
+                MarketConditionScore = signal.MarketConditionScore
+            }, marketData, strategyElapsedMs);
         }
 
         if (signal.Confidence < MinimumSignalConfidence)
@@ -110,8 +123,10 @@ public class DecisionService(
                 TradingMode = RuntimeTradingMode,
                 ExecutionIntent = executionIntent,
                 Reason = "Signal rejected - confidence below minimum threshold.",
-                Confidence = signal.Confidence
-            });
+                Confidence = signal.Confidence,
+                TrendConfidenceScore = signal.TrendConfidenceScore,
+                MarketConditionScore = signal.MarketConditionScore
+            }, marketData, strategyElapsedMs);
         }
 
         var marketCondition = marketConditionService.Evaluate(marketData);
@@ -125,8 +140,10 @@ public class DecisionService(
                 TradingMode = RuntimeTradingMode,
                 ExecutionIntent = executionIntent,
                 Reason = marketCondition.Reason,
-                Confidence = signal.Confidence
-            });
+                Confidence = signal.Confidence,
+                TrendConfidenceScore = signal.TrendConfidenceScore,
+                MarketConditionScore = signal.MarketConditionScore
+            }, marketData, strategyElapsedMs);
         }
 
         if (marketCondition.MarketConditionScore < 60)
@@ -139,8 +156,10 @@ public class DecisionService(
                 TradingMode = RuntimeTradingMode,
                 ExecutionIntent = executionIntent,
                 Reason = $"Market condition score too low ({marketCondition.MarketConditionScore}). {marketCondition.Reason}",
-                Confidence = signal.Confidence
-            });
+                Confidence = signal.Confidence,
+                TrendConfidenceScore = signal.TrendConfidenceScore,
+                MarketConditionScore = signal.MarketConditionScore
+            }, marketData, strategyElapsedMs);
         }
 
         if (marketData.CurrentPrice <= 0m)
@@ -153,8 +172,10 @@ public class DecisionService(
                 TradingMode = RuntimeTradingMode,
                 ExecutionIntent = executionIntent,
                 Reason = "Invalid current market price.",
-                Confidence = signal.Confidence
-            });
+                Confidence = signal.Confidence,
+                TrendConfidenceScore = signal.TrendConfidenceScore,
+                MarketConditionScore = signal.MarketConditionScore
+            }, marketData, strategyElapsedMs);
         }
 
         var isSpotOpenLong = RuntimeTradingMode == TradingMode.Spot && executionIntent == TradeExecutionIntent.OpenLong;
@@ -168,8 +189,10 @@ public class DecisionService(
                 TradingMode = RuntimeTradingMode,
                 ExecutionIntent = executionIntent,
                 Reason = $"No entry signal - market data stale. AgeSeconds={Math.Round(marketDataAgeSeconds, 2)}, MaxAgeSeconds={maxMarketDataAgeSeconds}.",
-                Confidence = signal.Confidence
-            });
+                Confidence = signal.Confidence,
+                TrendConfidenceScore = signal.TrendConfidenceScore,
+                MarketConditionScore = signal.MarketConditionScore
+            }, marketData, strategyElapsedMs);
         }
 
         var isSpotCloseLong = RuntimeTradingMode == TradingMode.Spot && executionIntent == TradeExecutionIntent.CloseLong;
@@ -200,8 +223,10 @@ public class DecisionService(
                     TradingMode = RuntimeTradingMode,
                     ExecutionIntent = executionIntent,
                     Reason = "Spot SELL skipped because no open long position exists.",
-                    Confidence = signal.Confidence
-                });
+                    Confidence = signal.Confidence,
+                    TrendConfidenceScore = signal.TrendConfidenceScore,
+                    MarketConditionScore = signal.MarketConditionScore
+                }, marketData, strategyElapsedMs);
             }
         }
 
@@ -230,7 +255,29 @@ public class DecisionService(
             RequiresReducedPositionSize = requiresReducedPositionSize,
             TradingMode = RuntimeTradingMode,
             RawSignal = signal.Signal,
-            ExecutionIntent = executionIntent
+            ExecutionIntent = executionIntent,
+            TrendConfidenceScore = signal.TrendConfidenceScore,
+            MarketConditionScore = signal.MarketConditionScore,
+            VolatilityRegime = signal.VolatilityRegime,
+            ExpectedTargetPrice = signal.ExpectedTargetPrice,
+            ExpectedMovePercent = signal.ExpectedMovePercent,
+            ExpectedTargetSource = signal.ExpectedTargetSource,
+            BreakoutRangeHigh = signal.BreakoutRangeHigh,
+            BreakoutRangeLow = signal.BreakoutRangeLow,
+            BreakoutThresholdPrice = signal.BreakoutThresholdPrice,
+            ExpectedTargetStructureExtensionUsed = signal.ExpectedTargetStructureExtensionUsed,
+            ExpectedTargetAtrUsed = signal.ExpectedTargetAtrUsed,
+            ConsecutiveBullishTrendCandles = signal.ConsecutiveBullishTrendCandles,
+            EntryNearRecentHigh = signal.EntryNearRecentHigh,
+            DistanceToRecentHighPercent = signal.DistanceToRecentHighPercent,
+            DistanceToInvalidationPercent = signal.DistanceToInvalidationPercent,
+            CurrentCloseAboveRecentHigh = signal.CurrentCloseAboveRecentHigh,
+            PreviousCandleBearish = signal.PreviousCandleBearish,
+            ShortMaSlopePercent = signal.ShortMaSlopePercent,
+            TrendStrengthPercent = signal.TrendStrengthPercent,
+            ProjectionMode = signal.ProjectionMode,
+            ProjectedExtension = signal.ProjectedExtension,
+            NormalTrendEntryRejectedReason = signal.NormalTrendEntryRejectedReason
         };
 
         var riskResult = await riskEvaluator.EvaluateAsync(candidate, cancellationToken);
@@ -249,8 +296,10 @@ public class DecisionService(
                 ExecutionIntent = executionIntent,
                 Reason = $"Risk rejected candidate: {riskResult.Reason}",
                 Candidate = candidate,
-                Confidence = signal.Confidence
-            });
+                Confidence = signal.Confidence,
+                TrendConfidenceScore = signal.TrendConfidenceScore,
+                MarketConditionScore = signal.MarketConditionScore
+            }, marketData, strategyElapsedMs);
         }
 
         // TODO: Add RiskScore/StopLossPrice/TakeProfitPrice/ExposurePercent to DecisionResult or TradeCandidate for downstream visibility.
@@ -272,8 +321,10 @@ public class DecisionService(
                     ExecutionIntent = executionIntent,
                     Reason = "AI validator rejected candidate.",
                     Candidate = candidate,
-                    Confidence = signal.Confidence
-                });
+                    Confidence = signal.Confidence,
+                    TrendConfidenceScore = signal.TrendConfidenceScore,
+                    MarketConditionScore = signal.MarketConditionScore
+                }, marketData, strategyElapsedMs);
             }
         }
 
@@ -314,8 +365,10 @@ public class DecisionService(
             ExecutionIntent = executionIntent,
             Reason = acceptedReason,
             Candidate = candidate,
-            Confidence = signal.Confidence
-        });
+            Confidence = signal.Confidence,
+            TrendConfidenceScore = signal.TrendConfidenceScore,
+            MarketConditionScore = signal.MarketConditionScore
+        }, marketData, strategyElapsedMs);
     }
 
     private void ReconcileStrategyPositionState(TradingSymbol symbol, Domain.Models.Trading.Position? persistedOpenPosition)
@@ -372,8 +425,30 @@ public class DecisionService(
                || oldState.EntryTimeUtc != newState.EntryTimeUtc;
     }
 
-    private DecisionResult FinalizeDecision(DecisionResult result)
+    private DecisionResult FinalizeDecision(
+        DecisionResult result,
+        MarketSnapshot? marketData = null,
+        long? strategyElapsedMs = null)
     {
+        if (marketData is not null)
+        {
+            logger.LogInformation(
+                "DecisionEngine market snapshot metadata: Symbol={Symbol}, CurrentPrice={CurrentPrice}, CurrentPriceSource={CurrentPriceSource}, CurrentPriceAsOfUtc={CurrentPriceAsOfUtc}, MarketDataAgeSeconds={MarketDataAgeSeconds}, LatestClosedCandleOpenTimeUtc={LatestClosedCandleOpenTimeUtc}, LatestClosedCandleCloseTimeUtc={LatestClosedCandleCloseTimeUtc}, LatestClosedCandleAgeSeconds={LatestClosedCandleAgeSeconds}, LatestClosedCandleClosePrice={LatestClosedCandleClosePrice}, MarketSnapshotSource={MarketSnapshotSource}, StrategyElapsedMs={StrategyElapsedMs}, FinalAction={FinalAction}, FinalReason={FinalReason}",
+                marketData.Symbol,
+                marketData.CurrentPrice,
+                marketData.CurrentPriceSource,
+                marketData.CurrentPriceAsOfUtc,
+                marketData.MarketDataAgeSeconds,
+                marketData.LatestClosedCandleOpenTimeUtc,
+                marketData.LatestClosedCandleCloseTimeUtc,
+                marketData.LatestClosedCandleAgeSeconds,
+                marketData.LatestClosedCandleClosePrice,
+                MarketSnapshotSource,
+                strategyElapsedMs,
+                result.Action,
+                result.Reason);
+        }
+
         logger.LogInformation(
             "DecisionEngine final decision: StrategyName={StrategyName}, Action={Action}, RawSignal={RawSignal}, TradingMode={TradingMode}, ExecutionIntent={ExecutionIntent}, Reason={Reason}, Candidate={@Candidate}",
             result.StrategyName, result.Action, result.RawSignal, result.TradingMode, result.ExecutionIntent, result.Reason, result.Candidate);
