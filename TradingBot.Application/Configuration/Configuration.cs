@@ -30,7 +30,9 @@ public static class Configuration
         services.AddHostedService<DecisionWorker>();
 
         services.AddHostedService<TradeMonitorWorker>();
-        services.AddHostedService<AnalyticsWorker>();
+        services.AddSingleton<CrossSymbolShadowBridge.CrossSymbolShadowBridgeService>();
+        services.AddHostedService<CrossSymbolShadowBridge.CrossSymbolShadowBridgeStartupValidator>();
+        services.AddHostedService<CrossSymbolShadowBridgeWorker>();
 
         services.AddScoped<IDecisionService, DecisionService>();
         services.AddScoped<IMovingAverageStrategy, MovingAverageTrendStrategy>();

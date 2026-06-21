@@ -1,0 +1,62 @@
+[
+  {
+    "RunAtUtc": "2026-06-20T15:23:18.3903731Z",
+    "FrozenStartUtc": "2026-06-20T15:23:18.3903731Z",
+    "ForwardWindowEndUtc": "2026-06-20T15:23:18.3903731Z",
+    "ForwardSpanDays": 0,
+    "ForwardTrades": 0,
+    "ForwardNetModerate": 0,
+    "ForwardNetLatency002": 0,
+    "ForwardNetStressPlus": 0,
+    "MaxConsecutiveLosses": 0,
+    "PositivePeriodRate": 0,
+    "HealthGatesPassed": 2,
+    "HealthGatesTotal": 8,
+    "Verdict": "NotEnoughForwardDataYet"
+  },
+  {
+    "RunAtUtc": "2026-06-20T17:07:16.7552336Z",
+    "FrozenStartUtc": "2026-06-20T15:23:18.3903731Z",
+    "ForwardWindowEndUtc": "2026-06-20T17:06:00Z",
+    "ForwardSpanDays": 0.0713,
+    "ForwardTrades": 0,
+    "ForwardNetModerate": 0,
+    "ForwardNetLatency002": 0,
+    "ForwardNetStressPlus": 0,
+    "MaxConsecutiveLosses": 0,
+    "PositivePeriodRate": 0,
+    "HealthGatesPassed": 2,
+    "HealthGatesTotal": 8,
+    "Verdict": "NotEnoughForwardDataYet"
+  },
+  {
+    "RunAtUtc": "2026-06-21T07:02:35.8078559Z",
+    "FrozenStartUtc": "2026-06-20T15:23:18.3903731Z",
+    "ForwardWindowEndUtc": "2026-06-21T07:01:00Z",
+    "ForwardSpanDays": 0.6512,
+    "ForwardTrades": 1,
+    "ForwardNetModerate": -0.66294418,
+    "ForwardNetLatency002": -0.69247852,
+    "ForwardNetStressPlus": -0.77394315,
+    "MaxConsecutiveLosses": 1,
+    "PositivePeriodRate": 0,
+    "HealthGatesPassed": 1,
+    "HealthGatesTotal": 8,
+    "Verdict": "KeepSecondary"
+  },
+  {
+    "RunAtUtc": "2026-06-21T08:18:01.6452477Z",
+    "FrozenStartUtc": "2026-06-20T15:23:18.3903731Z",
+    "ForwardWindowEndUtc": "2026-06-21T08:14:00Z",
+    "ForwardSpanDays": 0.7019,
+    "ForwardTrades": 1,
+    "ForwardNetModerate": -0.66294418,
+    "ForwardNetLatency002": -0.69247852,
+    "ForwardNetStressPlus": -0.77394315,
+    "MaxConsecutiveLosses": 1,
+    "PositivePeriodRate": 0,
+    "HealthGatesPassed": 1,
+    "HealthGatesTotal": 8,
+    "Verdict": "KeepSecondary"
+  }
+]

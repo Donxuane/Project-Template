@@ -20,6 +20,7 @@ public sealed class BacktestEntryGuard
     private readonly decimal _minNetProfitPercent;
     private readonly int _maxOpenPositionsPerSymbol;
     private readonly decimal _roundTripCostPercent;
+    private readonly ReachabilityConfidenceRelaxationSettings _relaxationSettings;
 
     public BacktestEntryGuard(IConfiguration configuration, ExecutionCostSettings costSettings)
     {
@@ -30,6 +31,7 @@ public sealed class BacktestEntryGuard
         _minNetProfitPercent = Math.Max(0m, configuration.GetValue<decimal?>("Trading:MinNetProfitPercent") ?? 0m);
         _maxOpenPositionsPerSymbol = Math.Max(1, configuration.GetValue<int?>("Trading:MaxOpenPositionsPerSymbol") ?? 1);
         _roundTripCostPercent = Math.Max(0m, (costSettings.FeeRatePercent * 2m) + costSettings.SpreadPercent + (costSettings.SlippagePercent * 2m));
+        _relaxationSettings = ReachabilityConfidenceRelaxationSettings.FromConfiguration(configuration);
     }
 
     public EntryGuardDecision Evaluate(
@@ -41,6 +43,9 @@ public sealed class BacktestEntryGuard
         var minConfidence = ResolveMinConfidence(symbol, signal);
         if (signal.Confidence < minConfidence)
         {
+            if (TryAllowReachabilityRelaxedConfidence(signal, minConfidence, out var relaxedDecision))
+                return relaxedDecision;
+
             return Block(ConfidenceBelowThreshold, signal, minConfidence);
         }
 
@@ -94,6 +99,38 @@ public sealed class BacktestEntryGuard
             TradeExecutionIntent.OpenLong.ToString());
 
         return Math.Clamp(resolution.MinConfidence, 0m, 1m);
+    }
+
+    private bool TryAllowReachabilityRelaxedConfidence(
+        StrategySignalResult signal,
+        decimal minConfidence,
+        out EntryGuardDecision decision)
+    {
+        decision = default!;
+        if (!_relaxationSettings.Enabled || signal.Confidence < _relaxationSettings.RelaxedMinConfidence)
+            return false;
+
+        if (!signal.ExpectedMovePercent.HasValue || !signal.DistanceToInvalidationPercent.HasValue)
+            return false;
+
+        var lock90Distance = CandidateForwardOutcomeAnalyzer.ComputeLockDistance(signal.ExpectedMovePercent, 90m);
+        if (!lock90Distance.HasValue
+            || lock90Distance.Value > _relaxationSettings.MaxLock90DistancePercent
+            || signal.DistanceToInvalidationPercent.Value > _relaxationSettings.MaxDistanceToInvalidationPercent)
+        {
+            return false;
+        }
+
+        var estimatedNetMovePercent = signal.ExpectedMovePercent.Value - _roundTripCostPercent;
+        decision = new EntryGuardDecision
+        {
+            IsAllowed = true,
+            Reason = string.Empty,
+            ConfidenceThreshold = minConfidence,
+            EstimatedRoundTripCostPercent = _roundTripCostPercent,
+            EstimatedNetMovePercent = estimatedNetMovePercent
+        };
+        return true;
     }
 
     private EntryGuardDecision Block(string reason, StrategySignalResult signal, decimal minConfidence, decimal? estimatedNetMovePercent = null)

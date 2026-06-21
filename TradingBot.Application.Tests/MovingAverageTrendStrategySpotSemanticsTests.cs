@@ -2124,6 +2124,271 @@ public class MovingAverageTrendStrategySpotSemanticsTests
     }
 
     [Fact]
+    public async Task PullbackContinuationOverride_HighVolatilityBlock_DefaultFalse_PreservesCurrentBehavior()
+    {
+        var strategy = CreateStrategy(
+            tradingMode: TradingMode.Spot,
+            allowShortSelling: false,
+            trendResult: CreateBullishPullbackTrend(),
+            positionManager: new PositionManager(),
+            marketConditionResult: new MarketConditionResult
+            {
+                IsValid = true,
+                AllowTrade = true,
+                MarketConditionScore = 85,
+                Reason = "ok",
+                Regime = VolatilityRegime.High,
+                RequiresReducedPositionSize = true,
+                Atr = 1.0m
+            },
+            configOverrides: new Dictionary<string, string?>
+            {
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableLowVolatilityBreakoutEntry"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendCloseAboveRecentHighFilter"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendRewardRiskFilter"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:UseConfirmedClosedCandlesForEntryQuality"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackContinuationOverride"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackMinExpectedRewardRisk"] = "0.40"
+            });
+
+        var result = await strategy.GenerateSignalAsync(CreateStrongRewardRiskSnapshot());
+
+        Assert.Equal(TradeSignal.Buy, result.Signal);
+        Assert.Contains("pullback continuation override confirmed", result.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PullbackContinuationOverride_HighVolatilityBlock_True_BlocksOnlyHighVolPullbackOverride()
+    {
+        var logger = new CapturingLogger<MovingAverageTrendStrategy>();
+        var strategy = CreateStrategy(
+            tradingMode: TradingMode.Spot,
+            allowShortSelling: false,
+            trendResult: CreateBullishPullbackTrend(),
+            positionManager: new PositionManager(),
+            logger: logger,
+            marketConditionResult: new MarketConditionResult
+            {
+                IsValid = true,
+                AllowTrade = true,
+                MarketConditionScore = 85,
+                Reason = "ok",
+                Regime = VolatilityRegime.High,
+                RequiresReducedPositionSize = true,
+                Atr = 1.0m
+            },
+            configOverrides: new Dictionary<string, string?>
+            {
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableLowVolatilityBreakoutEntry"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendCloseAboveRecentHighFilter"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendRewardRiskFilter"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:UseConfirmedClosedCandlesForEntryQuality"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackContinuationOverride"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackMinExpectedRewardRisk"] = "0.40",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnablePullbackOverrideHighVolatilityBlock"] = "true"
+            });
+
+        var result = await strategy.GenerateSignalAsync(CreateStrongRewardRiskSnapshot());
+
+        Assert.Equal(TradeSignal.Hold, result.Signal);
+        Assert.Contains("high volatility", result.Reason, StringComparison.OrdinalIgnoreCase);
+        var rejectionLog = logger.Entries.First(x => x.Message.Contains("entry rejected", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("high volatility", rejectionLog.Get<string>("Reason"), StringComparison.OrdinalIgnoreCase);
+        var qualityLog = logger.Entries.Last(x => x.Message.Contains("normal trend entry quality", StringComparison.OrdinalIgnoreCase));
+        Assert.True(qualityLog.Get<bool>("EnablePullbackOverrideHighVolatilityBlock"));
+        Assert.True(qualityLog.Get<bool>("PullbackOverrideBlockedByHighVolatility"));
+        Assert.Equal("High", qualityLog.Get<string>("VolatilityRegime"));
+    }
+
+    [Fact]
+    public async Task PullbackContinuationOverride_HighVolatilityBlock_True_AllowsNormalVolPullbackOverride()
+    {
+        var logger = new CapturingLogger<MovingAverageTrendStrategy>();
+        var strategy = CreateStrategy(
+            tradingMode: TradingMode.Spot,
+            allowShortSelling: false,
+            trendResult: CreateBullishPullbackTrend(),
+            positionManager: new PositionManager(),
+            logger: logger,
+            marketConditionResult: new MarketConditionResult
+            {
+                IsValid = true,
+                AllowTrade = true,
+                MarketConditionScore = 85,
+                Reason = "ok",
+                Regime = VolatilityRegime.Normal,
+                RequiresReducedPositionSize = false,
+                Atr = 1.0m
+            },
+            configOverrides: new Dictionary<string, string?>
+            {
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableLowVolatilityBreakoutEntry"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendCloseAboveRecentHighFilter"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendRewardRiskFilter"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:UseConfirmedClosedCandlesForEntryQuality"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackContinuationOverride"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackMinExpectedRewardRisk"] = "0.40",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnablePullbackOverrideHighVolatilityBlock"] = "true"
+            });
+
+        var result = await strategy.GenerateSignalAsync(CreateStrongRewardRiskSnapshot());
+
+        Assert.Equal(TradeSignal.Buy, result.Signal);
+        var qualityLog = logger.Entries.Last(x => x.Message.Contains("normal trend entry quality", StringComparison.OrdinalIgnoreCase));
+        Assert.False(qualityLog.Get<bool>("PullbackOverrideBlockedByHighVolatility"));
+        Assert.Equal("Normal", qualityLog.Get<string>("VolatilityRegime"));
+    }
+
+    [Fact]
+    public async Task PullbackContinuationOverride_ReclaimFilter_DefaultFalse_PreservesCurrentBehavior()
+    {
+        var strategy = CreateStrategy(
+            tradingMode: TradingMode.Spot,
+            allowShortSelling: false,
+            trendResult: CreateBullishPullbackTrend(),
+            positionManager: new PositionManager(),
+            marketConditionResult: new MarketConditionResult
+            {
+                IsValid = true,
+                AllowTrade = true,
+                MarketConditionScore = 85,
+                Reason = "ok",
+                Regime = VolatilityRegime.Normal,
+                Atr = 1.0m
+            },
+            configOverrides: new Dictionary<string, string?>
+            {
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableLowVolatilityBreakoutEntry"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendCloseAboveRecentHighFilter"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendRewardRiskFilter"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:UseConfirmedClosedCandlesForEntryQuality"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackContinuationOverride"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackMinExpectedRewardRisk"] = "0.40"
+            });
+
+        var result = await strategy.GenerateSignalAsync(CreateStrongRewardRiskSnapshot());
+
+        Assert.Equal(TradeSignal.Buy, result.Signal);
+        Assert.Contains("pullback continuation override confirmed", result.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PullbackContinuationOverride_ReclaimFilter_True_BlocksWhenPreviousCandleHighNotReclaimed()
+    {
+        var logger = new CapturingLogger<MovingAverageTrendStrategy>();
+        var strategy = CreateStrategy(
+            tradingMode: TradingMode.Spot,
+            allowShortSelling: false,
+            trendResult: CreateBullishPullbackTrend(),
+            positionManager: new PositionManager(),
+            logger: logger,
+            marketConditionResult: new MarketConditionResult
+            {
+                IsValid = true,
+                AllowTrade = true,
+                MarketConditionScore = 85,
+                Reason = "ok",
+                Regime = VolatilityRegime.Normal,
+                Atr = 1.0m
+            },
+            configOverrides: new Dictionary<string, string?>
+            {
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableLowVolatilityBreakoutEntry"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendCloseAboveRecentHighFilter"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendRewardRiskFilter"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:UseConfirmedClosedCandlesForEntryQuality"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackContinuationOverride"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackMinExpectedRewardRisk"] = "0.40",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackReclaimConfirmationFilter"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackReclaimMode"] = "PreviousCandleHigh"
+            });
+
+        var result = await strategy.GenerateSignalAsync(CreateStrongRewardRiskSnapshot());
+
+        Assert.Equal(TradeSignal.Hold, result.Signal);
+        Assert.Contains("did not reclaim previous candle high", result.Reason, StringComparison.OrdinalIgnoreCase);
+        var qualityLog = logger.Entries.Last(x => x.Message.Contains("normal trend entry quality", StringComparison.OrdinalIgnoreCase));
+        Assert.True(qualityLog.Get<bool>("EnableNormalTrendPullbackReclaimConfirmationFilter"));
+        Assert.Equal("PreviousCandleHigh", qualityLog.Get<string>("NormalTrendPullbackReclaimMode"));
+        Assert.False(qualityLog.Get<bool>("PullbackOverrideReclaimConfirmed"));
+    }
+
+    [Fact]
+    public async Task PullbackContinuationOverride_ReclaimFilter_True_AllowsWhenPreviousCandleHighReclaimed()
+    {
+        var logger = new CapturingLogger<MovingAverageTrendStrategy>();
+        var strategy = CreateStrategy(
+            tradingMode: TradingMode.Spot,
+            allowShortSelling: false,
+            trendResult: CreateBullishPullbackTrend(),
+            positionManager: new PositionManager(),
+            logger: logger,
+            marketConditionResult: new MarketConditionResult
+            {
+                IsValid = true,
+                AllowTrade = true,
+                MarketConditionScore = 85,
+                Reason = "ok",
+                Regime = VolatilityRegime.Normal,
+                Atr = 1.0m
+            },
+            configOverrides: new Dictionary<string, string?>
+            {
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableLowVolatilityBreakoutEntry"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendCloseAboveRecentHighFilter"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendRewardRiskFilter"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:UseConfirmedClosedCandlesForEntryQuality"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackContinuationOverride"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackMinExpectedRewardRisk"] = "0.40",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackReclaimConfirmationFilter"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackReclaimMode"] = "PreviousCandleHigh"
+            });
+
+        var result = await strategy.GenerateSignalAsync(CreatePullbackReclaimPassSnapshot());
+
+        Assert.Equal(TradeSignal.Buy, result.Signal);
+        var qualityLog = logger.Entries.Last(x => x.Message.Contains("normal trend entry quality", StringComparison.OrdinalIgnoreCase));
+        Assert.True(qualityLog.Get<bool>("PullbackOverrideReclaimConfirmed"));
+        Assert.Equal(99.9m, qualityLog.Get<decimal>("PullbackOverrideReclaimReferencePrice"));
+        Assert.Equal(100m, qualityLog.Get<decimal>("PullbackOverrideReclaimLatestClose"));
+    }
+
+    [Fact]
+    public async Task PullbackContinuationOverride_ReclaimFilter_UsesConfirmedClosedCandle_NotInProgressCandle()
+    {
+        var strategy = CreateStrategy(
+            tradingMode: TradingMode.Spot,
+            allowShortSelling: false,
+            trendResult: CreateBullishPullbackTrend(),
+            positionManager: new PositionManager(),
+            marketConditionResult: new MarketConditionResult
+            {
+                IsValid = true,
+                AllowTrade = true,
+                MarketConditionScore = 85,
+                Reason = "ok",
+                Regime = VolatilityRegime.Normal,
+                Atr = 1.0m
+            },
+            configOverrides: new Dictionary<string, string?>
+            {
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableLowVolatilityBreakoutEntry"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendCloseAboveRecentHighFilter"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendRewardRiskFilter"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:UseConfirmedClosedCandlesForEntryQuality"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackContinuationOverride"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackMinExpectedRewardRisk"] = "0.40",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackReclaimConfirmationFilter"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackReclaimMode"] = "PreviousCandleHigh"
+            });
+
+        var result = await strategy.GenerateSignalAsync(CreatePullbackReclaimInProgressOnlySnapshot());
+
+        Assert.Equal(TradeSignal.Hold, result.Signal);
+        Assert.Contains("did not reclaim previous candle high", result.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task PullbackContinuationOverride_DoesNotBypassExistingNormalTrendRewardRiskFilter()
     {
         var strategy = CreateStrategy(
@@ -2194,7 +2459,10 @@ public class MovingAverageTrendStrategySpotSemanticsTests
                 ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackMinExpectedRewardRisk"] = "0.80",
                 ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackRequireCloseAboveShortAndLongMa"] = "true",
                 ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackRequirePositiveShortSlope"] = "true",
-                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackRejectPreviousBearishCandle"] = "true"
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackRejectPreviousBearishCandle"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnablePullbackOverrideHighVolatilityBlock"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackReclaimConfirmationFilter"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackReclaimMode"] = "PreviousCandleHigh"
             };
         if (configOverrides is not null)
         {
@@ -2427,6 +2695,40 @@ public class MovingAverageTrendStrategySpotSemanticsTests
             ClosePrices = [99.90m, 99.92m, 99.94m, 99.96m, 99.98m, 100.00m],
             HighPrices = [100.02m, 100.04m, 100.06m, 100.08m, 100.10m, 100.10m],
             LowPrices = [99.70m, 99.72m, 99.74m, 99.75m, 99.76m, 99.78m],
+            Volumes = [10m, 10m, 10m, 10m, 10m, 10m]
+        };
+    }
+
+    private static MarketSnapshot CreatePullbackReclaimPassSnapshot()
+    {
+        var closedCandleTimeUtc = DateTime.UtcNow.AddMinutes(-1);
+        return new MarketSnapshot
+        {
+            Symbol = TradingSymbol.BNBUSDT,
+            CurrentPrice = 100.00m,
+            LatestClosedCandleOpenTimeUtc = closedCandleTimeUtc.AddMinutes(-1),
+            LatestClosedCandleCloseTimeUtc = closedCandleTimeUtc,
+            LatestClosedCandleClosePrice = 100.00m,
+            ClosePrices = [99.80m, 99.85m, 99.90m, 99.95m, 100.00m, 100.00m],
+            HighPrices = [100.20m, 103.00m, 100.60m, 101.20m, 99.90m, 103.00m],
+            LowPrices = [99.60m, 99.62m, 99.64m, 99.65m, 99.66m, 99.67m],
+            Volumes = [10m, 10m, 10m, 10m, 10m, 10m]
+        };
+    }
+
+    private static MarketSnapshot CreatePullbackReclaimInProgressOnlySnapshot()
+    {
+        var closedCandleTimeUtc = DateTime.UtcNow.AddMinutes(-1);
+        return new MarketSnapshot
+        {
+            Symbol = TradingSymbol.BNBUSDT,
+            CurrentPrice = 103m,
+            LatestClosedCandleOpenTimeUtc = closedCandleTimeUtc.AddMinutes(-1),
+            LatestClosedCandleCloseTimeUtc = closedCandleTimeUtc,
+            LatestClosedCandleClosePrice = 100m,
+            ClosePrices = [99.8m, 99.85m, 99.9m, 99.95m, 100m, 103m],
+            HighPrices = [100.2m, 103.0m, 100.6m, 101.2m, 102.0m, 103.2m],
+            LowPrices = [99.6m, 99.62m, 99.64m, 99.65m, 99.66m, 102m],
             Volumes = [10m, 10m, 10m, 10m, 10m, 10m]
         };
     }

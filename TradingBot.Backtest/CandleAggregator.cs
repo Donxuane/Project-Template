@@ -75,6 +75,8 @@ public static class CandleAggregator
             "1m" => 1,
             "3m" => 3,
             "5m" => 5,
+            "15m" => 15,
+            "30m" => 30,
             _ => throw new ArgumentException($"Unsupported interval '{interval}'.")
         };
     }

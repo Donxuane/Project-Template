@@ -99,6 +99,9 @@ public class RuntimeTradingConfigResolverTests
         Assert.True(settings.NormalTrendPullbackRequireCloseAboveShortAndLongMa);
         Assert.True(settings.NormalTrendPullbackRequirePositiveShortSlope);
         Assert.True(settings.NormalTrendPullbackRejectPreviousBearishCandle);
+        Assert.False(settings.EnablePullbackOverrideHighVolatilityBlock);
+        Assert.False(settings.EnableNormalTrendPullbackReclaimConfirmationFilter);
+        Assert.Equal("PreviousCandleHigh", settings.NormalTrendPullbackReclaimMode);
     }
 
     [Fact]
@@ -123,7 +126,10 @@ public class RuntimeTradingConfigResolverTests
                 ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackMinExpectedRewardRisk"] = "1.10",
                 ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackRequireCloseAboveShortAndLongMa"] = "false",
                 ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackRequirePositiveShortSlope"] = "false",
-                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackRejectPreviousBearishCandle"] = "false"
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackRejectPreviousBearishCandle"] = "false",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnablePullbackOverrideHighVolatilityBlock"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:EnableNormalTrendPullbackReclaimConfirmationFilter"] = "true",
+                ["DecisionEngine:MovingAverageCrossoverStrategy:NormalTrendPullbackReclaimMode"] = "PreviousCandleHigh"
             })
             .Build();
 
@@ -145,5 +151,8 @@ public class RuntimeTradingConfigResolverTests
         Assert.False(settings.NormalTrendPullbackRequireCloseAboveShortAndLongMa);
         Assert.False(settings.NormalTrendPullbackRequirePositiveShortSlope);
         Assert.False(settings.NormalTrendPullbackRejectPreviousBearishCandle);
+        Assert.True(settings.EnablePullbackOverrideHighVolatilityBlock);
+        Assert.True(settings.EnableNormalTrendPullbackReclaimConfirmationFilter);
+        Assert.Equal("PreviousCandleHigh", settings.NormalTrendPullbackReclaimMode);
     }
 }

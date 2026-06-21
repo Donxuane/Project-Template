@@ -120,7 +120,10 @@ public static class RuntimeTradingConfigResolver
             Math.Max(0m, configuration.GetValue<decimal?>($"{prefix}:NormalTrendPullbackMinExpectedRewardRisk") ?? 0.80m),
             configuration.GetValue<bool?>($"{prefix}:NormalTrendPullbackRequireCloseAboveShortAndLongMa") ?? true,
             configuration.GetValue<bool?>($"{prefix}:NormalTrendPullbackRequirePositiveShortSlope") ?? true,
-            configuration.GetValue<bool?>($"{prefix}:NormalTrendPullbackRejectPreviousBearishCandle") ?? true);
+            configuration.GetValue<bool?>($"{prefix}:NormalTrendPullbackRejectPreviousBearishCandle") ?? true,
+            configuration.GetValue<bool?>($"{prefix}:EnablePullbackOverrideHighVolatilityBlock") ?? false,
+            configuration.GetValue<bool?>($"{prefix}:EnableNormalTrendPullbackReclaimConfirmationFilter") ?? false,
+            configuration.GetValue<string>($"{prefix}:NormalTrendPullbackReclaimMode") ?? "PreviousCandleHigh");
     }
 
     public static TradeMonitoringRuntimeSettings ResolveTradeMonitoring(IConfiguration configuration)
@@ -325,7 +328,10 @@ public sealed record MovingAverageStrategyRuntimeSettings(
     decimal NormalTrendPullbackMinExpectedRewardRisk,
     bool NormalTrendPullbackRequireCloseAboveShortAndLongMa,
     bool NormalTrendPullbackRequirePositiveShortSlope,
-    bool NormalTrendPullbackRejectPreviousBearishCandle);
+    bool NormalTrendPullbackRejectPreviousBearishCandle,
+    bool EnablePullbackOverrideHighVolatilityBlock,
+    bool EnableNormalTrendPullbackReclaimConfirmationFilter,
+    string NormalTrendPullbackReclaimMode);
 
 public sealed record TradeMonitoringRuntimeSettings(
     int IntervalSeconds,

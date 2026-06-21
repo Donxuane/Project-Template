@@ -81,6 +81,9 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
     private readonly bool _normalTrendPullbackRequireCloseAboveShortAndLongMa;
     private readonly bool _normalTrendPullbackRequirePositiveShortSlope;
     private readonly bool _normalTrendPullbackRejectPreviousBearishCandle;
+    private readonly bool _enablePullbackOverrideHighVolatilityBlock;
+    private readonly bool _enableNormalTrendPullbackReclaimConfirmationFilter;
+    private readonly string _normalTrendPullbackReclaimMode;
     private readonly decimal _estimatedRoundTripCostPercent;
     private readonly TimeSpan _breakoutRejectionAggregationInterval;
     private readonly TimeSpan _normalEntryRejectionAggregationInterval;
@@ -161,6 +164,14 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
         _normalTrendPullbackRequireCloseAboveShortAndLongMa = strategySettings.NormalTrendPullbackRequireCloseAboveShortAndLongMa;
         _normalTrendPullbackRequirePositiveShortSlope = strategySettings.NormalTrendPullbackRequirePositiveShortSlope;
         _normalTrendPullbackRejectPreviousBearishCandle = strategySettings.NormalTrendPullbackRejectPreviousBearishCandle;
+        _enablePullbackOverrideHighVolatilityBlock = strategySettings.EnablePullbackOverrideHighVolatilityBlock;
+        _enableNormalTrendPullbackReclaimConfirmationFilter = strategySettings.EnableNormalTrendPullbackReclaimConfirmationFilter;
+        _normalTrendPullbackReclaimMode = string.Equals(
+            strategySettings.NormalTrendPullbackReclaimMode,
+            "PreviousCandleHigh",
+            StringComparison.OrdinalIgnoreCase)
+            ? "PreviousCandleHigh"
+            : "PreviousCandleHigh";
         var feeRatePercent = Math.Max(0m, configuration.GetValue<decimal?>("Trading:FeeRatePercent") ?? 0.1m);
         var estimatedSpreadPercent = Math.Max(0m, configuration.GetValue<decimal?>("Trading:EstimatedSpreadPercent") ?? 0.05m);
         _estimatedRoundTripCostPercent = (feeRatePercent * 2m) + estimatedSpreadPercent;
@@ -631,8 +642,15 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
                 var pullbackOverride = EvaluatePullbackContinuationOverride(
                     marketData,
                     trend,
+                    marketCondition,
                     normalTrendQuality,
                     qualityRejectionReason);
+                var effectiveRejectionReason = pullbackOverride.Evaluated
+                                               && !pullbackOverride.Allowed
+                                               && (pullbackOverride.BlockedByHighVolatility
+                                                   || pullbackOverride.ReclaimConfirmed == false)
+                    ? pullbackOverride.RejectedReason ?? qualityRejectionReason
+                    : qualityRejectionReason;
                 var rejectedQuality = normalTrendQuality with
                 {
                     EntryRejectedReason = qualityRejectionReason,
@@ -642,7 +660,12 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
                     PullbackContinuationOverrideAllowed = pullbackOverride.Allowed,
                     PullbackContinuationOverrideRejectedReason = pullbackOverride.RejectedReason,
                     CloseAboveShortAndLongMaForPullback = pullbackOverride.CloseAboveShortAndLongMaForPullback,
-                    ShortSlopePositiveForPullback = pullbackOverride.ShortSlopePositiveForPullback
+                    ShortSlopePositiveForPullback = pullbackOverride.ShortSlopePositiveForPullback,
+                    PullbackOverrideBlockedByHighVolatility = pullbackOverride.BlockedByHighVolatility,
+                    PullbackOverrideReclaimConfirmed = pullbackOverride.ReclaimConfirmed,
+                    PullbackOverrideReclaimReferencePrice = pullbackOverride.ReclaimReferencePrice,
+                    PullbackOverrideReclaimLatestClose = pullbackOverride.ReclaimLatestClose,
+                    VolatilityRegime = marketCondition.Regime.ToString()
                 };
                 if (pullbackOverride.Allowed)
                 {
@@ -671,11 +694,11 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
                     trend,
                     marketCondition,
                     confidence,
-                    qualityRejectionReason,
+                    effectiveRejectionReason,
                     lowVolBreakoutPathEvaluated: false,
                     lowVolBreakoutPassed: null,
                     normalTrendEntryPathEvaluated: true,
-                    normalTrendEntrySkippedReason: qualityRejectionReason,
+                    normalTrendEntrySkippedReason: effectiveRejectionReason,
                     canEnterLongResult: true,
                     canEnterLongFailureReason: null,
                     normalTrendFallbackAfterFailedBreakoutEnabled: _enableNormalTrendFallbackWhenLowVolBreakoutFails,
@@ -683,7 +706,7 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
                     lowVolBreakoutFailureReason: lowVolBreakoutFailureReason,
                     normalTrendQuality: rejectedQuality);
                 return Task.FromResult(HoldWithContext(
-                    qualityRejectionReason,
+                    effectiveRejectionReason,
                     confidence,
                     rejectedQuality));
             }
@@ -1115,7 +1138,12 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
             PullbackContinuationOverrideAllowed: false,
             PullbackContinuationOverrideRejectedReason: null,
             CloseAboveShortAndLongMaForPullback: null,
-            ShortSlopePositiveForPullback: null);
+            ShortSlopePositiveForPullback: null,
+            PullbackOverrideBlockedByHighVolatility: false,
+            PullbackOverrideReclaimConfirmed: null,
+            PullbackOverrideReclaimReferencePrice: null,
+            PullbackOverrideReclaimLatestClose: null,
+            VolatilityRegime: null);
     }
 
     private bool TryPassNormalTrendEntryQualityFilters(
@@ -1195,6 +1223,7 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
     private PullbackContinuationOverrideEvaluation EvaluatePullbackContinuationOverride(
         MarketSnapshot marketData,
         TrendAnalysisResult trend,
+        MarketConditionResult marketCondition,
         NormalTrendEntryQualityMetrics metrics,
         string qualityRejectionReason)
     {
@@ -1206,6 +1235,10 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
                 false,
                 "Pullback continuation override disabled.",
                 null,
+                null,
+                false,
+                null,
+                null,
                 null);
         }
 
@@ -1216,6 +1249,10 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
                 false,
                 "Trend is not bullish-confirmed.",
                 null,
+                null,
+                false,
+                null,
+                null,
                 null);
         }
 
@@ -1225,6 +1262,25 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
                 true,
                 false,
                 $"Primary rejection is not close-above-recent-high. Reason={qualityRejectionReason}",
+                null,
+                null,
+                false,
+                null,
+                null,
+                null);
+        }
+
+        var highVolatilityForPullbackOverride = marketCondition.Regime == VolatilityRegime.High || marketCondition.RequiresReducedPositionSize;
+        if (_enablePullbackOverrideHighVolatilityBlock && highVolatilityForPullbackOverride)
+        {
+            return new PullbackContinuationOverrideEvaluation(
+                true,
+                false,
+                "Pullback continuation override blocked because high volatility requires reduced position size.",
+                null,
+                null,
+                true,
+                null,
                 null,
                 null);
         }
@@ -1241,12 +1297,19 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
         var confirmedCloses = closes.Take(Math.Max(0, confirmedClosedCount)).ToArray();
         if (confirmedCloses.Length == 0)
             confirmedCloses = closes.ToArray();
+        var highs = marketData.HighPrices;
+        var confirmedHighs = highs.Take(Math.Max(0, confirmedClosedCount)).ToArray();
+        if (confirmedHighs.Length == 0)
+            confirmedHighs = highs.ToArray();
 
         var latestConfirmedClose = confirmedCloses.LastOrDefault();
         var closeAboveShortAndLongMa = latestConfirmedClose > trend.CurrentShortMa && latestConfirmedClose > trend.CurrentLongMa;
         var shortSlopePositive = trend.ShortMaSlopePercent > 0m;
         var previousConfirmedCandleBearish = confirmedCloses.Length >= 2
                                              && confirmedCloses[^1] < confirmedCloses[^2];
+        var previousConfirmedCandleHigh = confirmedHighs.Length >= 2
+            ? confirmedHighs[^2]
+            : (confirmedCloses.Length >= 2 ? confirmedCloses[^2] : 0m);
 
         if (_normalTrendPullbackRequireCloseAboveShortAndLongMa && !closeAboveShortAndLongMa)
         {
@@ -1255,7 +1318,11 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
                 false,
                 "Pullback continuation requires latest confirmed close above short and long moving averages.",
                 closeAboveShortAndLongMa,
-                shortSlopePositive);
+                shortSlopePositive,
+                false,
+                null,
+                null,
+                null);
         }
 
         if (_normalTrendPullbackRequirePositiveShortSlope && !shortSlopePositive)
@@ -1265,7 +1332,11 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
                 false,
                 "Pullback continuation requires positive short moving-average slope.",
                 closeAboveShortAndLongMa,
-                shortSlopePositive);
+                shortSlopePositive,
+                false,
+                null,
+                null,
+                null);
         }
 
         if (_normalTrendPullbackRejectPreviousBearishCandle && previousConfirmedCandleBearish)
@@ -1275,7 +1346,31 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
                 false,
                 "Pullback continuation rejects immediate bearish confirmed closed candle before entry.",
                 closeAboveShortAndLongMa,
-                shortSlopePositive);
+                shortSlopePositive,
+                false,
+                null,
+                null,
+                null);
+        }
+
+        if (_enableNormalTrendPullbackReclaimConfirmationFilter
+            && string.Equals(_normalTrendPullbackReclaimMode, "PreviousCandleHigh", StringComparison.OrdinalIgnoreCase))
+        {
+            var reclaimConfirmed = confirmedCloses.Length >= 2
+                                   && latestConfirmedClose > previousConfirmedCandleHigh;
+            if (!reclaimConfirmed)
+            {
+                return new PullbackContinuationOverrideEvaluation(
+                    true,
+                    false,
+                    "Pullback continuation override rejected because latest confirmed close did not reclaim previous candle high.",
+                    closeAboveShortAndLongMa,
+                    shortSlopePositive,
+                    false,
+                    false,
+                    previousConfirmedCandleHigh > 0m ? previousConfirmedCandleHigh : null,
+                    latestConfirmedClose > 0m ? latestConfirmedClose : null);
+            }
         }
 
         if (metrics.DistanceToInvalidationPercent < _normalTrendMinDistanceToInvalidationPercent)
@@ -1285,7 +1380,11 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
                 false,
                 $"Pullback continuation distance to invalidation {metrics.DistanceToInvalidationPercent:F4}% is below minimum {_normalTrendMinDistanceToInvalidationPercent:F4}%.",
                 closeAboveShortAndLongMa,
-                shortSlopePositive);
+                shortSlopePositive,
+                false,
+                null,
+                null,
+                null);
         }
 
         if (!metrics.ExpectedRewardRisk.HasValue
@@ -1297,7 +1396,11 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
                 false,
                 $"Pullback continuation expected reward:risk {actual} is below minimum {_normalTrendPullbackMinExpectedRewardRisk:F4}.",
                 closeAboveShortAndLongMa,
-                shortSlopePositive);
+                shortSlopePositive,
+                false,
+                null,
+                null,
+                null);
         }
 
         return new PullbackContinuationOverrideEvaluation(
@@ -1305,7 +1408,19 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
             true,
             null,
             closeAboveShortAndLongMa,
-            shortSlopePositive);
+            shortSlopePositive,
+            false,
+            !_enableNormalTrendPullbackReclaimConfirmationFilter || confirmedCloses.Length >= 2
+                ? (_enableNormalTrendPullbackReclaimConfirmationFilter
+                    ? latestConfirmedClose > previousConfirmedCandleHigh
+                    : null)
+                : null,
+            _enableNormalTrendPullbackReclaimConfirmationFilter && previousConfirmedCandleHigh > 0m
+                ? previousConfirmedCandleHigh
+                : null,
+            _enableNormalTrendPullbackReclaimConfirmationFilter && latestConfirmedClose > 0m
+                ? latestConfirmedClose
+                : null);
     }
 
     private void LogNormalTrendEntryQualityDiagnostics(
@@ -1314,7 +1429,7 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
         bool qualityFilterRejected)
     {
         _logger.LogInformation(
-            "MovingAverageTrendStrategy normal trend entry quality: Symbol={Symbol}, ConsecutiveBullishTrendCandles={ConsecutiveBullishTrendCandles}, EntryNearRecentHigh={EntryNearRecentHigh}, DistanceToRecentHighPercent={DistanceToRecentHighPercent}, DistanceToInvalidationPercent={DistanceToInvalidationPercent}, ExpectedRewardRisk={ExpectedRewardRisk}, TrendStrengthPercent={TrendStrengthPercent}, CurrentCloseAboveRecentHigh={CurrentCloseAboveRecentHigh}, PreviousCandleBearish={PreviousCandleBearish}, RewardRiskRejected={RewardRiskRejected}, NearHighRejected={NearHighRejected}, EntryRejectedReason={EntryRejectedReason}, UseConfirmedClosedCandlesForEntryQuality={UseConfirmedClosedCandlesForEntryQuality}, EntryQualityCandleMode={EntryQualityCandleMode}, EntryQualityLatestClose={EntryQualityLatestClose}, EntryQualityLatestCloseTimeUtc={EntryQualityLatestCloseTimeUtc}, EntryQualityRangeHigh={EntryQualityRangeHigh}, EntryQualityRangeLow={EntryQualityRangeLow}, EntryQualityRangeWindowCandleCount={EntryQualityRangeWindowCandleCount}, LatestCloseFromConfirmedClosedCandle={LatestCloseFromConfirmedClosedCandle}, LatestClosePotentiallyInProgressCandle={LatestClosePotentiallyInProgressCandle}, RangeWindowCandleCount={RangeWindowCandleCount}, RangeRecentHigh={RangeRecentHigh}, RangeRecentLow={RangeRecentLow}, LatestClosedCandleCloseTimeUtc={LatestClosedCandleCloseTimeUtc}, PullbackContinuationOverrideEvaluated={PullbackContinuationOverrideEvaluated}, PullbackContinuationOverrideAllowed={PullbackContinuationOverrideAllowed}, PullbackContinuationOverrideRejectedReason={PullbackContinuationOverrideRejectedReason}, CloseAboveShortAndLongMaForPullback={CloseAboveShortAndLongMaForPullback}, ShortSlopePositiveForPullback={ShortSlopePositiveForPullback}, QualityFilterRejected={QualityFilterRejected}, EnableNormalTrendPullbackContinuationOverride={EnableNormalTrendPullbackContinuationOverride}, NormalTrendPullbackMinExpectedRewardRisk={NormalTrendPullbackMinExpectedRewardRisk}, EnableNormalTrendBullishPersistenceFilter={EnableNormalTrendBullishPersistenceFilter}, NormalTrendMinBullishPersistenceCandles={NormalTrendMinBullishPersistenceCandles}, EnableNormalTrendCloseAboveRecentHighFilter={EnableNormalTrendCloseAboveRecentHighFilter}, EnableNormalTrendMinDistanceToInvalidationFilter={EnableNormalTrendMinDistanceToInvalidationFilter}, NormalTrendMinDistanceToInvalidationPercent={NormalTrendMinDistanceToInvalidationPercent}, EnableNormalTrendRejectPreviousBearishCandleFilter={EnableNormalTrendRejectPreviousBearishCandleFilter}, EnableNormalTrendRewardRiskFilter={EnableNormalTrendRewardRiskFilter}, NormalTrendMinExpectedRewardRisk={NormalTrendMinExpectedRewardRisk}, EnableNormalTrendNearRecentHighRejection={EnableNormalTrendNearRecentHighRejection}, NormalTrendNearRecentHighRequiresRewardRisk={NormalTrendNearRecentHighRequiresRewardRisk}, NormalTrendNearRecentHighRequiresTrendStrengthPercent={NormalTrendNearRecentHighRequiresTrendStrengthPercent}, NormalTrendNearRecentHighPercent={NormalTrendNearRecentHighPercent}",
+            "MovingAverageTrendStrategy normal trend entry quality: Symbol={Symbol}, ConsecutiveBullishTrendCandles={ConsecutiveBullishTrendCandles}, EntryNearRecentHigh={EntryNearRecentHigh}, DistanceToRecentHighPercent={DistanceToRecentHighPercent}, DistanceToInvalidationPercent={DistanceToInvalidationPercent}, ExpectedRewardRisk={ExpectedRewardRisk}, TrendStrengthPercent={TrendStrengthPercent}, CurrentCloseAboveRecentHigh={CurrentCloseAboveRecentHigh}, PreviousCandleBearish={PreviousCandleBearish}, RewardRiskRejected={RewardRiskRejected}, NearHighRejected={NearHighRejected}, EntryRejectedReason={EntryRejectedReason}, UseConfirmedClosedCandlesForEntryQuality={UseConfirmedClosedCandlesForEntryQuality}, EntryQualityCandleMode={EntryQualityCandleMode}, EntryQualityLatestClose={EntryQualityLatestClose}, EntryQualityLatestCloseTimeUtc={EntryQualityLatestCloseTimeUtc}, EntryQualityRangeHigh={EntryQualityRangeHigh}, EntryQualityRangeLow={EntryQualityRangeLow}, EntryQualityRangeWindowCandleCount={EntryQualityRangeWindowCandleCount}, LatestCloseFromConfirmedClosedCandle={LatestCloseFromConfirmedClosedCandle}, LatestClosePotentiallyInProgressCandle={LatestClosePotentiallyInProgressCandle}, RangeWindowCandleCount={RangeWindowCandleCount}, RangeRecentHigh={RangeRecentHigh}, RangeRecentLow={RangeRecentLow}, LatestClosedCandleCloseTimeUtc={LatestClosedCandleCloseTimeUtc}, PullbackContinuationOverrideEvaluated={PullbackContinuationOverrideEvaluated}, PullbackContinuationOverrideAllowed={PullbackContinuationOverrideAllowed}, PullbackContinuationOverrideRejectedReason={PullbackContinuationOverrideRejectedReason}, PullbackOverrideBlockedByHighVolatility={PullbackOverrideBlockedByHighVolatility}, PullbackOverrideReclaimConfirmed={PullbackOverrideReclaimConfirmed}, PullbackOverrideReclaimReferencePrice={PullbackOverrideReclaimReferencePrice}, PullbackOverrideReclaimLatestClose={PullbackOverrideReclaimLatestClose}, VolatilityRegime={VolatilityRegime}, CloseAboveShortAndLongMaForPullback={CloseAboveShortAndLongMaForPullback}, ShortSlopePositiveForPullback={ShortSlopePositiveForPullback}, QualityFilterRejected={QualityFilterRejected}, EnableNormalTrendPullbackContinuationOverride={EnableNormalTrendPullbackContinuationOverride}, EnablePullbackOverrideHighVolatilityBlock={EnablePullbackOverrideHighVolatilityBlock}, EnableNormalTrendPullbackReclaimConfirmationFilter={EnableNormalTrendPullbackReclaimConfirmationFilter}, NormalTrendPullbackReclaimMode={NormalTrendPullbackReclaimMode}, NormalTrendPullbackMinExpectedRewardRisk={NormalTrendPullbackMinExpectedRewardRisk}, EnableNormalTrendBullishPersistenceFilter={EnableNormalTrendBullishPersistenceFilter}, NormalTrendMinBullishPersistenceCandles={NormalTrendMinBullishPersistenceCandles}, EnableNormalTrendCloseAboveRecentHighFilter={EnableNormalTrendCloseAboveRecentHighFilter}, EnableNormalTrendMinDistanceToInvalidationFilter={EnableNormalTrendMinDistanceToInvalidationFilter}, NormalTrendMinDistanceToInvalidationPercent={NormalTrendMinDistanceToInvalidationPercent}, EnableNormalTrendRejectPreviousBearishCandleFilter={EnableNormalTrendRejectPreviousBearishCandleFilter}, EnableNormalTrendRewardRiskFilter={EnableNormalTrendRewardRiskFilter}, NormalTrendMinExpectedRewardRisk={NormalTrendMinExpectedRewardRisk}, EnableNormalTrendNearRecentHighRejection={EnableNormalTrendNearRecentHighRejection}, NormalTrendNearRecentHighRequiresRewardRisk={NormalTrendNearRecentHighRequiresRewardRisk}, NormalTrendNearRecentHighRequiresTrendStrengthPercent={NormalTrendNearRecentHighRequiresTrendStrengthPercent}, NormalTrendNearRecentHighPercent={NormalTrendNearRecentHighPercent}",
             symbol,
             metrics.ConsecutiveBullishTrendCandles,
             metrics.EntryNearRecentHigh,
@@ -1343,10 +1458,18 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
             metrics.PullbackContinuationOverrideEvaluated,
             metrics.PullbackContinuationOverrideAllowed,
             metrics.PullbackContinuationOverrideRejectedReason,
+            metrics.PullbackOverrideBlockedByHighVolatility,
+            metrics.PullbackOverrideReclaimConfirmed,
+            metrics.PullbackOverrideReclaimReferencePrice,
+            metrics.PullbackOverrideReclaimLatestClose,
+            metrics.VolatilityRegime,
             metrics.CloseAboveShortAndLongMaForPullback,
             metrics.ShortSlopePositiveForPullback,
             qualityFilterRejected,
             _enableNormalTrendPullbackContinuationOverride,
+            _enablePullbackOverrideHighVolatilityBlock,
+            _enableNormalTrendPullbackReclaimConfirmationFilter,
+            _normalTrendPullbackReclaimMode,
             _normalTrendPullbackMinExpectedRewardRisk,
             _enableNormalTrendBullishPersistenceFilter,
             _normalTrendMinBullishPersistenceCandles,
@@ -2455,7 +2578,11 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
         bool Allowed,
         string? RejectedReason,
         bool? CloseAboveShortAndLongMaForPullback,
-        bool? ShortSlopePositiveForPullback);
+        bool? ShortSlopePositiveForPullback,
+        bool BlockedByHighVolatility,
+        bool? ReclaimConfirmed,
+        decimal? ReclaimReferencePrice,
+        decimal? ReclaimLatestClose);
 
     private sealed record NormalTrendEntryQualityMetrics(
         int ConsecutiveBullishTrendCandles,
@@ -2486,7 +2613,12 @@ public class MovingAverageTrendStrategy : IMovingAverageStrategy
         bool PullbackContinuationOverrideAllowed,
         string? PullbackContinuationOverrideRejectedReason,
         bool? CloseAboveShortAndLongMaForPullback,
-        bool? ShortSlopePositiveForPullback);
+        bool? ShortSlopePositiveForPullback,
+        bool PullbackOverrideBlockedByHighVolatility,
+        bool? PullbackOverrideReclaimConfirmed,
+        decimal? PullbackOverrideReclaimReferencePrice,
+        decimal? PullbackOverrideReclaimLatestClose,
+        string? VolatilityRegime);
 
     private sealed class NormalEntryRejectionAggregationWindow(DateTime nowUtc)
     {
