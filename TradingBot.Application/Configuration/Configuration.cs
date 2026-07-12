@@ -34,6 +34,13 @@ public static class Configuration
         services.AddHostedService<CrossSymbolShadowBridge.CrossSymbolShadowBridgeStartupValidator>();
         services.AddHostedService<CrossSymbolShadowBridgeWorker>();
 
+        // ETH15 fixed-frequency forward-incubation -> Binance Futures Testnet execution (testnet-validation only).
+        services.AddScoped<TestnetExecution.Eth15TestnetGateEvaluator>();
+        services.AddScoped<TestnetExecution.Eth15TestnetShortAccounting>();
+        services.AddScoped<TestnetExecution.Eth15TestnetReportWriter>();
+        services.AddHostedService<TestnetExecution.Eth15TestnetExecutionStartupValidator>();
+        services.AddHostedService<TestnetExecution.Eth15TestnetExecutionWorker>();
+
         services.AddScoped<IDecisionService, DecisionService>();
         services.AddScoped<IMovingAverageStrategy, MovingAverageTrendStrategy>();
         services.AddScoped<IStrategy>(sp => sp.GetRequiredService<IMovingAverageStrategy>());

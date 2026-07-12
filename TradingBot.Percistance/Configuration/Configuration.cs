@@ -68,6 +68,18 @@ public static class Configuration
         });
         services.AddHttpClient<IAICLinetService, AIClientService>();
 
+        // ETH15 testnet-validation client. Bound exclusively to the Binance Futures Testnet
+        // base URL; never shares the live Spot client/keys. Real trading is impossible here.
+        services.AddHttpClient<IFuturesTestnetClient, FuturesTestnetClient>((sp, client) =>
+        {
+            var cfg = sp.GetRequiredService<IConfiguration>();
+            var baseUrl = cfg.GetValue<string>("Eth15TestnetExecution:TestnetBaseUrl");
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                baseUrl = "https://testnet.binancefuture.com";
+            client.BaseAddress = new Uri(baseUrl);
+            client.Timeout = TimeSpan.FromSeconds(Math.Max(1, cfg.GetValue<int?>("Binance:Http:TimeoutSeconds") ?? 15));
+        });
+
         services.AddSingleton<IConnectionMultiplexer>(x =>
         {
             var settings = configuration.GetSection("RedisSettings").Get<RedisSettings>()!;

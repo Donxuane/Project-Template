@@ -19,9 +19,9 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
         {
             const string insertSql = """
                 INSERT INTO positions
-                    (symbol, side, quantity, average_price, stop_loss_price, take_profit_price, exit_price, exit_reason, opened_at, closed_at, realized_pnl, unrealized_pnl, is_open, is_closing, created_at, updated_at)
+                    (symbol, side, quantity, average_price, stop_loss_price, take_profit_price, exit_price, exit_reason, opened_at, closed_at, realized_pnl, unrealized_pnl, is_open, is_closing, execution_environment, created_at, updated_at)
                 VALUES
-                    (@Symbol, @Side, @Quantity, @AveragePrice, @StopLossPrice, @TakeProfitPrice, @ExitPrice, @ExitReason, @OpenedAt, @ClosedAt, @RealizedPnl, @UnrealizedPnl, @IsOpen, @IsClosing, @CreatedAt, @UpdatedAt)
+                    (@Symbol, @Side, @Quantity, @AveragePrice, @StopLossPrice, @TakeProfitPrice, @ExitPrice, @ExitReason, @OpenedAt, @ClosedAt, @RealizedPnl, @UnrealizedPnl, @IsOpen, @IsClosing, @ExecutionEnvironment, @CreatedAt, @UpdatedAt)
                 RETURNING id;
                 """;
 
@@ -41,6 +41,7 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
                 position.UnrealizedPnl,
                 position.IsOpen,
                 position.IsClosing,
+                position.ExecutionEnvironment,
                 position.CreatedAt,
                 position.UpdatedAt
             };
@@ -68,6 +69,7 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
                     unrealized_pnl = @UnrealizedPnl,
                     is_open = @IsOpen,
                     is_closing = @IsClosing,
+                    execution_environment = @ExecutionEnvironment,
                     updated_at = @UpdatedAt
                 WHERE id = @Id;
                 """;
@@ -89,6 +91,7 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
                 position.UnrealizedPnl,
                 position.IsOpen,
                 position.IsClosing,
+                position.ExecutionEnvironment,
                 position.UpdatedAt
             };
             await connection.ExecuteAsync(new CommandDefinition(updateSql, updateParam, cancellationToken: cancellationToken));
@@ -102,7 +105,7 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
             SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
                    take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
                    closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
-                   is_open AS IsOpen, is_closing AS IsClosing, created_at AS CreatedAt, updated_at AS UpdatedAt
+                   is_open AS IsOpen, is_closing AS IsClosing, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM positions
             WHERE id = @Id;
             """;
@@ -117,9 +120,10 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
             SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
                    take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
                    closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
-                   is_open AS IsOpen, is_closing AS IsClosing, created_at AS CreatedAt, updated_at AS UpdatedAt
+                   is_open AS IsOpen, is_closing AS IsClosing, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM positions
             WHERE symbol = @Symbol AND is_open = TRUE
+              AND execution_environment IS NULL
             LIMIT 1;
             """;
 
@@ -133,9 +137,10 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
             SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
                    take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
                    closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
-                   is_open AS IsOpen, is_closing AS IsClosing, created_at AS CreatedAt, updated_at AS UpdatedAt
+                   is_open AS IsOpen, is_closing AS IsClosing, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM positions
             WHERE is_open = TRUE
+              AND execution_environment IS NULL
             ORDER BY symbol;
             """;
 
@@ -162,10 +167,12 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
             unrealized_pnl AS UnrealizedPnl,
             is_open AS IsOpen,
             is_closing AS IsClosing,
+            execution_environment AS ExecutionEnvironment,
             created_at AS CreatedAt, 
             updated_at AS UpdatedAt
             FROM positions
             WHERE is_open = FALSE
+              AND execution_environment IS NULL
             ORDER BY COALESCE(closed_at, updated_at, created_at), id;
             """;
 
@@ -218,6 +225,60 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
                     UpdatedAt = DateTime.UtcNow
                 },
                 cancellationToken: cancellationToken));
+    }
+
+    public async Task<Position?> GetOpenPositionByEnvironmentAsync(TradingSymbol symbol, string executionEnvironment, CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
+                   take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
+                   closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
+                   is_open AS IsOpen, is_closing AS IsClosing, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
+            FROM positions
+            WHERE symbol = @Symbol AND is_open = TRUE
+              AND execution_environment = @ExecutionEnvironment
+            ORDER BY id DESC
+            LIMIT 1;
+            """;
+
+        return await connection.QuerySingleOrDefaultAsync<Position>(
+            new CommandDefinition(sql, new { Symbol = (int)symbol, ExecutionEnvironment = executionEnvironment }, cancellationToken: cancellationToken));
+    }
+
+    public async Task<IReadOnlyList<Position>> GetOpenPositionsByEnvironmentAsync(string executionEnvironment, CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
+                   take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
+                   closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
+                   is_open AS IsOpen, is_closing AS IsClosing, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
+            FROM positions
+            WHERE is_open = TRUE
+              AND execution_environment = @ExecutionEnvironment
+            ORDER BY id;
+            """;
+
+        var result = await connection.QueryAsync<Position>(
+            new CommandDefinition(sql, new { ExecutionEnvironment = executionEnvironment }, cancellationToken: cancellationToken));
+        return result.ToList();
+    }
+
+    public async Task<IReadOnlyList<Position>> GetClosedPositionsByEnvironmentAsync(string executionEnvironment, CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
+                   take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
+                   closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
+                   is_open AS IsOpen, is_closing AS IsClosing, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
+            FROM positions
+            WHERE is_open = FALSE
+              AND execution_environment = @ExecutionEnvironment
+            ORDER BY COALESCE(closed_at, updated_at, created_at), id;
+            """;
+
+        var result = await connection.QueryAsync<Position>(
+            new CommandDefinition(sql, new { ExecutionEnvironment = executionEnvironment }, cancellationToken: cancellationToken));
+        return result.ToList();
     }
 }
 

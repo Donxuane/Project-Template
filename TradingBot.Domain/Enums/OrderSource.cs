@@ -7,5 +7,6 @@ public enum OrderSource
     TradeMonitorWorker = 2,
     PositionReconciliationWorker = 3,
     Manual = 4,
-    Api = 5
+    Api = 5,
+    Eth15TestnetExecution = 6
 }

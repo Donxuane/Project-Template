@@ -22,5 +22,13 @@ public interface IOrderRepository
 
     /// <summary>For workers: locks rows with FOR UPDATE SKIP LOCKED, batch limited. Must run inside a transaction.</summary>
     Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusForWorkerAsync(IDbTransaction transaction, ProcessingStatus processingStatus, int limit, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns all orders for a non-live execution environment (e.g. testnet validation). Live
+    /// Spot rows have NULL environment and are excluded. Default implementation is provided so
+    /// existing repositories/test doubles that only handle live Spot do not need to change.
+    /// </summary>
+    Task<IReadOnlyList<Order>> GetByExecutionEnvironmentAsync(string executionEnvironment, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("GetByExecutionEnvironmentAsync is not supported by this repository.");
 }
 

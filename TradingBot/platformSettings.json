@@ -3,9 +3,9 @@
   //"_comment_BaseURL": "Binance API base URL. Use testnet URL for safe testing, mainnet URL for production.",
   "BaseURL": "https://testnet.binance.vision",
   //"_comment_ApiKey": "Exchange API key used for authenticated endpoints. Prefer environment variables in real deployments.",
-  "ApiKey": "",
+  "ApiKey": "C8Lu7WgBjRSf5kBUy1RQ7pSo8W8onl79M7C6MOODdjoSxxAPbSkB7njpFnL8oLnP",
   //"_comment_SecretKey": "Exchange API secret paired with ApiKey. Keep private; rotate if exposed.",
-  "SecretKey": "",
+  "SecretKey": "FCLzMlALwmLVWaw9qnbweJ0iecZKNfRZmydq7FvCVLeG2jahv1fL21Y9EHWocEX5",
   "PriceValidators": {
     //"_comment": "Exchange filter examples used by order validation logic (tick size, lot size, min notional).",
     "PRICE_FILTER": {

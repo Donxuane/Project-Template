@@ -21,5 +21,12 @@ public class Order
     public decimal Quantity { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+
+    /// <summary>
+    /// Execution venue/environment. Null = live Binance Spot (legacy default).
+    /// "BinanceFuturesTestnet" marks ETH15 testnet-validation orders that the live Spot
+    /// workers must ignore.
+    /// </summary>
+    public string? ExecutionEnvironment { get; set; }
 }
 

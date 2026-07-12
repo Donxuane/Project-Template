@@ -13,9 +13,9 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
     {
         const string sql = """
             INSERT INTO orders
-                (exchange_order_id, correlationid, parent_position_id, order_source, close_reason, symbol, side, status, processing_status, sync_retry_count, price, quantity, created_at, updated_at)
+                (exchange_order_id, correlationid, parent_position_id, order_source, close_reason, symbol, side, status, processing_status, sync_retry_count, price, quantity, execution_environment, created_at, updated_at)
             VALUES
-                (@ExchangeOrderId, @CorrelationId, @ParentPositionId, @OrderSource, @CloseReason, @Symbol, @Side, @Status, @ProcessingStatus, @SyncRetryCount, @Price, @Quantity, @CreatedAt, @UpdatedAt)
+                (@ExchangeOrderId, @CorrelationId, @ParentPositionId, @OrderSource, @CloseReason, @Symbol, @Side, @Status, @ProcessingStatus, @SyncRetryCount, @Price, @Quantity, @ExecutionEnvironment, @CreatedAt, @UpdatedAt)
             RETURNING id;
             """;
 
@@ -36,6 +36,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
             order.SyncRetryCount,
             order.Price,
             order.Quantity,
+            order.ExecutionEnvironment,
             order.CreatedAt,
             order.UpdatedAt
         };
@@ -63,6 +64,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
                 sync_retry_count = @SyncRetryCount,
                 price = @Price,
                 quantity = @Quantity,
+                execution_environment = @ExecutionEnvironment,
                 updated_at = @UpdatedAt
             WHERE id = @Id;
             """;
@@ -82,6 +84,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
             order.SyncRetryCount,
             order.Price,
             order.Quantity,
+            order.ExecutionEnvironment,
             order.UpdatedAt
         };
         await connection.ExecuteAsync(new CommandDefinition(sql, param, cancellationToken: cancellationToken));
@@ -90,7 +93,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
     public async Task<Order?> GetByIdAsync(long id, CancellationToken cancellationToken = default)
     {
         const string sql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE id = @Id;
             """;
@@ -102,7 +105,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
     public async Task<Order?> GetByExchangeOrderIdAsync(long exchangeOrderId, CancellationToken cancellationToken = default)
     {
         const string sql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE exchange_order_id = @ExchangeOrderId;
             """;
@@ -122,9 +125,10 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
         };
 
         const string baseSql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE status = ANY(@Statuses)
+              AND execution_environment IS NULL
             """;
 
         var orderAndLimit = " ORDER BY created_at ASC" + (limit.HasValue ? " LIMIT @Limit" : "");
@@ -154,9 +158,10 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
         };
 
         const string sql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE status = ANY(@Statuses)
+              AND execution_environment IS NULL
             ORDER BY created_at DESC;
             """;
 
@@ -169,9 +174,10 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
     public async Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusAsync(ProcessingStatus processingStatus, int? limit = null, CancellationToken cancellationToken = default)
     {
         var sql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE processing_status = @ProcessingStatus
+              AND execution_environment IS NULL
             ORDER BY created_at ASC
             """ + (limit.HasValue ? " LIMIT @Limit" : "") + ";";
 
@@ -202,6 +208,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
             FROM orders
             WHERE side = @BuySide
               AND close_reason = @CloseReasonNone
+              AND execution_environment IS NULL
               AND status <> ALL(@TerminalStatuses)
               AND processing_status <> ALL(@TerminalProcessingStatuses);
             """;
@@ -232,6 +239,7 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
             WHERE parent_position_id = @ParentPositionId
               AND side = @SellSide
               AND close_reason <> @CloseReasonNone
+              AND execution_environment IS NULL
               AND status <> ALL(@TerminalStatuses)
               AND processing_status <> ALL(@AccountedProcessingStatuses)
             LIMIT 1;
@@ -274,9 +282,10 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
         };
 
         var baseSql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE status = ANY(@Statuses)
+              AND execution_environment IS NULL
             """;
         var sql = symbol.HasValue
             ? baseSql + " AND symbol = @Symbol ORDER BY created_at ASC FOR UPDATE SKIP LOCKED LIMIT @Limit;"
@@ -297,9 +306,10 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
     public async Task<IReadOnlyList<Order>> GetOrdersByProcessingStatusForWorkerAsync(IDbTransaction transaction, ProcessingStatus processingStatus, int limit, CancellationToken cancellationToken = default)
     {
         const string sql = """
-            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, created_at AS CreatedAt, updated_at AS UpdatedAt
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM orders
             WHERE processing_status = @ProcessingStatus
+              AND execution_environment IS NULL
             ORDER BY created_at ASC
             FOR UPDATE SKIP LOCKED
             LIMIT @Limit;
@@ -307,6 +317,20 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
 
         var result = await connection.QueryAsync<Order>(
             new CommandDefinition(sql, new { ProcessingStatus = (int)processingStatus, Limit = limit }, transaction, cancellationToken: cancellationToken));
+        return result.ToList();
+    }
+
+    public async Task<IReadOnlyList<Order>> GetByExecutionEnvironmentAsync(string executionEnvironment, CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            SELECT id, exchange_order_id AS ExchangeOrderId, correlationid AS CorrelationId, parent_position_id AS ParentPositionId, order_source AS OrderSource, close_reason AS CloseReason, symbol, side, status, processing_status AS ProcessingStatus, sync_retry_count AS SyncRetryCount, price, quantity, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
+            FROM orders
+            WHERE execution_environment = @ExecutionEnvironment
+            ORDER BY created_at ASC;
+            """;
+
+        var result = await connection.QueryAsync<Order>(
+            new CommandDefinition(sql, new { ExecutionEnvironment = executionEnvironment }, cancellationToken: cancellationToken));
         return result.ToList();
     }
 }
