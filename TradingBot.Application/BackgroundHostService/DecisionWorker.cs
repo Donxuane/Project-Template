@@ -35,6 +35,12 @@ public class DecisionWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!(configuration.GetValue<bool?>("DecisionEngine:Enabled") ?? true))
+        {
+            logger.LogInformation("DecisionWorker is disabled by configuration (DecisionEngine:Enabled=false).");
+            return;
+        }
+
         var settings = ReadSettings();
         if (settings.Quantity <= 0m)
         {

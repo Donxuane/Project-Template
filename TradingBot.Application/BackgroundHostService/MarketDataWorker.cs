@@ -24,6 +24,12 @@ public class MarketDataWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!(configuration.GetValue<bool?>("Workers:MarketData:Enabled") ?? true))
+        {
+            logger.LogInformation("MarketDataWorker is disabled by configuration (Workers:MarketData:Enabled=false).");
+            return;
+        }
+
         var intervalSeconds = Math.Max(1, configuration.GetValue<int?>("Workers:MarketData:IntervalSeconds") ?? DefaultIntervalSeconds);
         logger.LogInformation("MarketDataWorker started. Interval: {Interval}s", intervalSeconds);
 

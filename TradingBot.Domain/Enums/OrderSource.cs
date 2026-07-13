@@ -8,5 +8,6 @@ public enum OrderSource
     PositionReconciliationWorker = 3,
     Manual = 4,
     Api = 5,
-    Eth15TestnetExecution = 6
+    Eth15TestnetExecution = 6,
+    SpotFuturesCrossMarketTestnetV1 = 7
 }

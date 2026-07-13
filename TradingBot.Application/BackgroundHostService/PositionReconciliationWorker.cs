@@ -25,6 +25,12 @@ public class PositionReconciliationWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!(configuration.GetValue<bool?>("Trading:ReconciliationEnabled") ?? true))
+        {
+            logger.LogInformation("PositionReconciliationWorker is disabled by configuration (Trading:ReconciliationEnabled=false).");
+            return;
+        }
+
         var intervalMinutes = Math.Max(1, configuration.GetValue<int?>("Trading:ReconciliationIntervalMinutes") ?? DefaultIntervalMinutes);
         logger.LogInformation("PositionReconciliationWorker started. Interval: {Interval} min", intervalMinutes);
 

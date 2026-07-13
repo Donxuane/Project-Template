@@ -8,4 +8,10 @@ public static class ExecutionEnvironments
 {
     /// <summary>ETH15 fixed-frequency forward-incubation validation on Binance Futures Testnet.</summary>
     public const string BinanceFuturesTestnet = "BinanceFuturesTestnet";
+
+    /// <summary>
+    /// SpotFuturesCrossMarketTestnetV1 runtime strategy on Binance USD-M Futures Testnet.
+    /// Value kept &lt;= 24 chars to fit the execution_environment varchar(24) columns.
+    /// </summary>
+    public const string SpotFuturesCrossMarketTestnetV1 = "SpotFuturesXTestnetV1";
 }

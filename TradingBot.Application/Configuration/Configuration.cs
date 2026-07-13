@@ -41,6 +41,15 @@ public static class Configuration
         services.AddHostedService<TestnetExecution.Eth15TestnetExecutionStartupValidator>();
         services.AddHostedService<TestnetExecution.Eth15TestnetExecutionWorker>();
 
+        // SpotFuturesCrossMarketTestnetV1: synchronized Spot + Futures closed-candle strategy
+        // trading real Binance USD-M Futures TESTNET orders (fake funds only).
+        services.AddScoped<SpotFuturesCrossMarket.SpotFuturesCrossMarketDataService>();
+        services.AddScoped<SpotFuturesCrossMarket.SpotFuturesCrossMarketSignalEngine>();
+        services.AddScoped<SpotFuturesCrossMarket.SpotFuturesCrossMarketAccounting>();
+        services.AddScoped<SpotFuturesCrossMarket.SpotFuturesCrossMarketReportWriter>();
+        services.AddHostedService<SpotFuturesCrossMarket.SpotFuturesCrossMarketStartupValidator>();
+        services.AddHostedService<SpotFuturesCrossMarket.SpotFuturesCrossMarketTestnetV1Worker>();
+
         services.AddScoped<IDecisionService, DecisionService>();
         services.AddScoped<IMovingAverageStrategy, MovingAverageTrendStrategy>();
         services.AddScoped<IStrategy>(sp => sp.GetRequiredService<IMovingAverageStrategy>());

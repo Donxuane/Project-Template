@@ -40,6 +40,7 @@ public static class Configuration
         services.AddScoped<IReportingsRepository, ReportingsRepository>();
         services.AddScoped<ITradeExecutionDesicionsRepository, TradeExecutionDesicionsRepository>();
         services.AddScoped<ITradingHealthDiagnosticsRepository, TradingHealthDiagnosticsRepository>();
+        services.AddScoped<ISpotFuturesCrossMarketEvaluationRepository, SpotFuturesCrossMarketEvaluationRepository>();
 
         //risk management
         services.AddScoped<IRiskManagementService, RiskManagementService>();

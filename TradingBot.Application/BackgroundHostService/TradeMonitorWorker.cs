@@ -49,6 +49,12 @@ public class TradeMonitorWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!(configuration.GetValue<bool?>("TradeMonitoring:Enabled") ?? true))
+        {
+            logger.LogInformation("TradeMonitorWorker is disabled by configuration (TradeMonitoring:Enabled=false).");
+            return;
+        }
+
         var settings = ReadSettings();
 
         logger.LogInformation(

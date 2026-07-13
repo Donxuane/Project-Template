@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -15,13 +16,22 @@ namespace TradingBot.Application.BackgroundHostService;
 /// <summary>
 /// Syncs account balances from Binance (GET /api/v3/account) into balance_snapshots table.
 /// </summary>
-public class BalanceSyncWorker(IServiceScopeFactory scopeFactory, ILogger<BalanceSyncWorker> logger) : BackgroundService
+public class BalanceSyncWorker(
+    IServiceScopeFactory scopeFactory,
+    IConfiguration configuration,
+    ILogger<BalanceSyncWorker> logger) : BackgroundService
 {
     private const int IntervalSeconds = 60;
     private const int RetryDelaySeconds = 15;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!(configuration.GetValue<bool?>("Workers:BalanceSync:Enabled") ?? true))
+        {
+            logger.LogInformation("BalanceSyncWorker is disabled by configuration (Workers:BalanceSync:Enabled=false).");
+            return;
+        }
+
         logger.LogInformation("BalanceSyncWorker started. Interval: {Interval}s", IntervalSeconds);
 
         while (!stoppingToken.IsCancellationRequested)
