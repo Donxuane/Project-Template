@@ -369,7 +369,7 @@ public sealed class AdaptiveRollingProfitExitRepository(IDbConnection connection
                created_at AS CreatedAt,
                updated_at AS UpdatedAt
         FROM adaptive_rolling_profit_exit_states
-        """;
+        """ + "\n";
 
     private static object ToStateParam(AdaptiveRollingProfitExitStateRecord state) => new
     {

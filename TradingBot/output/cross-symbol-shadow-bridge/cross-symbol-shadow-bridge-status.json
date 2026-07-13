@@ -1,0 +1,33 @@
+{
+  "warning": "Cross-symbol shadow bridge is actual-bot shadow/dry-run integration only. RealOrdersPlaced=false always. No orders are placed.",
+  "EvaluatedAtUtc": "2026-07-13T13:33:15.2756803Z",
+  "Status": "InputFilesMissing",
+  "CompactSummaryLine": "",
+  "Message": "Required candidate engine V2 input files missing. Missing: C:\\Users\\vakht\\AppData\\Local\\Temp\\cross-symbol-shadow-bridge-missing-bfac21cd42044b2c903904d16fa08acd\\cross-symbol-candidate-engine-v2-candidates.json; C:\\Users\\vakht\\AppData\\Local\\Temp\\cross-symbol-shadow-bridge-missing-bfac21cd42044b2c903904d16fa08acd\\cross-symbol-candidate-engine-v2-summary.json; C:\\Users\\vakht\\AppData\\Local\\Temp\\cross-symbol-shadow-bridge-missing-bfac21cd42044b2c903904d16fa08acd\\cross-symbol-candidate-engine-v2-execution-ready-portfolio.json",
+  "Enabled": true,
+  "ShadowOnly": true,
+  "BacktestOnly": false,
+  "DryRunOnly": true,
+  "AllowOrders": false,
+  "AllowTestnetOrders": false,
+  "AllowRealOrders": false,
+  "RealOrdersPlaced": false,
+  "LiveFuturesRecommended": false,
+  "CandidateInputDirectory": "C:\\Users\\vakht\\AppData\\Local\\Temp\\cross-symbol-shadow-bridge-missing-bfac21cd42044b2c903904d16fa08acd",
+  "OutputDirectory": "C:\\Users\\vakht\\OneDrive\\Desktop\\ProjectTemplate\\TradingBot\\output\\cross-symbol-shadow-bridge",
+  "TotalCandidatesLoaded": 0,
+  "ExecutionReadyCandidateCount": 0,
+  "ResearchPromotedShadowOnlyCount": 0,
+  "RejectedOrParkedCount": 0,
+  "ExecutionReadyPortfolioCandidateCount": 0,
+  "ShadowDecisionsAvailable": false,
+  "BottleneckAuditAvailable": false,
+  "CandidatesFileExists": false,
+  "SummaryFileExists": false,
+  "ExecutionPortfolioFileExists": false,
+  "missingInputFiles": [
+    "C:\\Users\\vakht\\AppData\\Local\\Temp\\cross-symbol-shadow-bridge-missing-bfac21cd42044b2c903904d16fa08acd\\cross-symbol-candidate-engine-v2-candidates.json",
+    "C:\\Users\\vakht\\AppData\\Local\\Temp\\cross-symbol-shadow-bridge-missing-bfac21cd42044b2c903904d16fa08acd\\cross-symbol-candidate-engine-v2-summary.json",
+    "C:\\Users\\vakht\\AppData\\Local\\Temp\\cross-symbol-shadow-bridge-missing-bfac21cd42044b2c903904d16fa08acd\\cross-symbol-candidate-engine-v2-execution-ready-portfolio.json"
+  ]
+}

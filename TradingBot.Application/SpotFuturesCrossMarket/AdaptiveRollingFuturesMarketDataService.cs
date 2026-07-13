@@ -22,6 +22,8 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
         var state = _symbols.GetOrAdd(symbol, _ => new SymbolSocketState(symbol));
         lock (state.Sync)
         {
+            state.PruneWindowSeconds = Math.Max(settings.FlowWindowSeconds, settings.VelocityWindowSeconds) + 30;
+
             if (state.ReaderTask is { IsCompleted: false })
                 return Task.CompletedTask;
 
@@ -55,7 +57,14 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
             };
 
             if (requiredTimes.Any(x => !x.HasValue))
-                return state.ToInvalidSnapshot("MissingRequiredStream", now);
+            {
+                var missing = new List<string>(4);
+                if (!state.LastBookTickerLocalReceiptUtc.HasValue) missing.Add("bookTicker");
+                if (!state.LastDepthLocalReceiptUtc.HasValue) missing.Add("depth");
+                if (!state.LastAggTradeLocalReceiptUtc.HasValue) missing.Add("aggTrade");
+                if (!state.LastMarkPriceLocalReceiptUtc.HasValue) missing.Add("markPrice");
+                return state.ToInvalidSnapshot($"MissingRequiredStream:{string.Join(",", missing)}", now);
+            }
 
             var maxAgeMs = requiredTimes
                 .Where(x => x.HasValue)
@@ -351,6 +360,10 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
         var mid = (state.BestBidPrice + state.BestAskPrice) / 2m;
         if (mid > 0m)
             state.Prices.Enqueue(new PriceObservation(mid, receivedAtUtc));
+
+        var cutoff = receivedAtUtc.AddSeconds(-state.PruneWindowSeconds);
+        while (state.Prices.Count > 0 && state.Prices.Peek().ObservedAtUtc < cutoff)
+            state.Prices.Dequeue();
     }
 
     private static void ApplyDepth(SymbolSocketState state, JsonElement payload, DateTime receivedAtUtc)
@@ -375,6 +388,9 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
         var buyerIsMaker = GetBool(payload, "m");
         var quantity = GetDecimal(payload, "q");
         state.Trades.Enqueue(new TradeObservation(quantity, IsBuyerAggressor: !buyerIsMaker, receivedAtUtc));
+        var cutoff = receivedAtUtc.AddSeconds(-state.PruneWindowSeconds);
+        while (state.Trades.Count > 0 && state.Trades.Peek().ReceivedAtUtc < cutoff)
+            state.Trades.Dequeue();
         state.LastAggTradeEventTimeUtc = FromUnixMs(GetLong(payload, "E"));
         state.LastAggTradeTransactionTimeUtc = FromUnixMs(GetLong(payload, "T"));
         state.LastAggTradeLocalReceiptUtc = receivedAtUtc;
@@ -498,6 +514,7 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
     {
         public TradingSymbol Symbol { get; } = symbol;
         public object Sync { get; } = new();
+        public int PruneWindowSeconds { get; set; } = 120;
         public CancellationTokenSource? Cancellation { get; set; }
         public Task? ReaderTask { get; set; }
         public bool Connected { get; set; }

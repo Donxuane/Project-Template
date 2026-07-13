@@ -22,8 +22,10 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
     private const string Env = SpotFuturesCrossMarketSettings.ExecutionEnvironment;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ConcurrentDictionary<long, int> _exitConfirmations = new();
+    private readonly ConcurrentDictionary<long, int> _lossCutConfirmations = new();
     private readonly ConcurrentDictionary<long, DateTime> _lastEvaluationPersistUtc = new();
     private readonly ConcurrentDictionary<long, DateTime> _lastDynamicUpdateUtc = new();
+    private readonly ConcurrentDictionary<long, (string Reason, DateTime LoggedAtUtc)> _lastMarketDataDegradedLog = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -152,13 +154,16 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
             state.LastEvaluatedAtUtc = now;
             await rollingRepository.UpsertStateAsync(state, cancellationToken);
             await PersistEvaluationAsync(rollingRepository, state, position, snapshot, null, "SkippedMarketDataDegraded", state.LastRejectionReason, false, cancellationToken);
-            logger.LogWarning(
-                "AdaptiveRollingProfitExitV1 skipped rolling decision because market data is degraded. PositionId={PositionId} Symbol={Symbol} Reason={Reason} AgeMs={AgeMs} LatencyMs={LatencyMs}",
-                position.Id,
-                position.Symbol,
-                state.LastRejectionReason,
-                snapshot.MarketDataAgeMs,
-                snapshot.StreamLatencyMs);
+            if (ShouldLogMarketDataDegraded(position.Id, state.LastRejectionReason, now))
+            {
+                logger.LogWarning(
+                    "AdaptiveRollingProfitExitV1 skipped rolling decision because market data is degraded. PositionId={PositionId} Symbol={Symbol} Reason={Reason} AgeMs={AgeMs} LatencyMs={LatencyMs}",
+                    position.Id,
+                    position.Symbol,
+                    state.LastRejectionReason,
+                    snapshot.MarketDataAgeMs,
+                    snapshot.StreamLatencyMs);
+            }
             return state;
         }
 
@@ -290,6 +295,46 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
         var closeFloor = settings.CloseProfitFloor(entryNotional);
         var profitableEnoughToArm = projection.ProjectedNetPnl >= armThreshold;
         var previousState = state.State;
+        var isArmed = state.State is AdaptiveRollingProfitExitState.ProfitArmed or AdaptiveRollingProfitExitState.RidingTrend;
+
+        // Loss-side protection: a losing position with a sustained adverse trend is cut early
+        // instead of riding all the way to the original ATR stop-loss. Armed positions are
+        // excluded because they are in profit territory and handled by giveback/collapse logic.
+        if (!isArmed && settings.EnableEarlyLossCut)
+        {
+            var lossFloor = settings.EarlyLossCutGrossFloor(entryNotional);
+            var positionAgeOk = position.OpenedAt.HasValue &&
+                                (now - position.OpenedAt.Value).TotalSeconds >= settings.EarlyLossCutMinPositionAgeSeconds;
+            var losingBeyondFloor = projection.GrossPnl <= -lossFloor;
+            var trendAgainst = trendFlow.Score <= settings.EarlyLossCutTrendScoreMax &&
+                               trendFlow.DirectionNormalizedVelocityBps < 0m;
+
+            if (positionAgeOk && losingBeyondFloor && trendAgainst)
+            {
+                state.EligibleSinceUtc = null;
+                state.ConsecutiveProfitableObservations = 0;
+                var lossCutConfirmations = _lossCutConfirmations.AddOrUpdate(position.Id, 1, (_, count) => count + 1);
+                if (lossCutConfirmations < settings.EarlyLossCutConfirmationObservations)
+                {
+                    return new RollingDecision(
+                        "EarlyLossCutPending",
+                        $"Gross {projection.GrossPnl:F6} <= -{lossFloor:F6} with adverse trend score {trendFlow.Score:F2}. Confirmation {lossCutConfirmations}/{settings.EarlyLossCutConfirmationObservations}.",
+                        false,
+                        previousState != state.State);
+                }
+
+                Transition(state, AdaptiveRollingProfitExitState.ExitPending, now);
+                return new RollingDecision(
+                    "ExitEarlyLossCut",
+                    $"Early loss cut: gross {projection.GrossPnl:F6} <= -{lossFloor:F6}, net {projection.ProjectedNetPnl:F6}, trend score {trendFlow.Score:F2}, velocity {trendFlow.DirectionNormalizedVelocityBps:F2}bps.",
+                    true,
+                    true,
+                    PositionExitReason.RiskExit,
+                    CloseReason.RiskExit);
+            }
+
+            _lossCutConfirmations.TryRemove(position.Id, out _);
+        }
 
         if (profitableEnoughToArm)
         {
@@ -300,13 +345,19 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
         {
             state.EligibleSinceUtc = null;
             state.ConsecutiveProfitableObservations = 0;
-            if (state.State is AdaptiveRollingProfitExitState.Monitoring or AdaptiveRollingProfitExitState.ProfitEligible)
-            {
-                Transition(state, AdaptiveRollingProfitExitState.Monitoring, now);
-            }
 
-            _exitConfirmations.TryRemove(position.Id, out _);
-            return new RollingDecision("HoldBelowArmThreshold", $"Projected net {projection.ProjectedNetPnl:F6} < arm threshold {armThreshold:F6}.", false, previousState != state.State);
+            // Armed positions must fall through to the armed handling below so giveback /
+            // profit-collapse protection keeps working even when PnL dips under the arm threshold.
+            if (!isArmed)
+            {
+                if (state.State is AdaptiveRollingProfitExitState.Monitoring or AdaptiveRollingProfitExitState.ProfitEligible)
+                {
+                    Transition(state, AdaptiveRollingProfitExitState.Monitoring, now);
+                }
+
+                _exitConfirmations.TryRemove(position.Id, out _);
+                return new RollingDecision("HoldBelowArmThreshold", $"Projected net {projection.ProjectedNetPnl:F6} < arm threshold {armThreshold:F6}.", false, previousState != state.State);
+            }
         }
 
         var dwellMet = state.EligibleSinceUtc.HasValue &&
@@ -315,7 +366,7 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
 
         if (state.State is AdaptiveRollingProfitExitState.Monitoring or AdaptiveRollingProfitExitState.DisabledOrDegraded)
         {
-            if (!dwellMet && !consecutiveMet)
+            if (!dwellMet || !consecutiveMet)
                 return new RollingDecision("EligibilityDwellPending", $"Net profit threshold held {state.ConsecutiveProfitableObservations}/{settings.EligibilityConsecutiveObservations} observations.", false, previousState != state.State);
 
             Transition(state, AdaptiveRollingProfitExitState.ProfitEligible, now);
@@ -351,12 +402,24 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
 
         if (projection.ProjectedNetPnl < closeFloor)
         {
-            _exitConfirmations.TryRemove(position.Id, out _);
+            // Once armed, PnL collapsing below the close floor means the banked profit is nearly
+            // gone; close before it turns into a loss instead of holding for the stop-loss.
+            var collapseConfirmations = _exitConfirmations.AddOrUpdate(position.Id, 1, (_, count) => count + 1);
+            if (collapseConfirmations < settings.ExitConfirmationObservations)
+            {
+                return new RollingDecision(
+                    "ExitProfitCollapsePending",
+                    $"Projected net {projection.ProjectedNetPnl:F6} < close floor {closeFloor:F6} after arming (peak={state.PeakProjectedNetPnl:F6}). Confirmation {collapseConfirmations}/{settings.ExitConfirmationObservations}.",
+                    false,
+                    previousState != state.State || peakChanged);
+            }
+
+            Transition(state, AdaptiveRollingProfitExitState.ExitPending, now);
             return new RollingDecision(
-                peakChanged ? "PeakUpdatedHoldBelowCloseFloor" : "HoldBelowCloseFloor",
-                $"Projected net {projection.ProjectedNetPnl:F6} < close floor {closeFloor:F6}.",
-                false,
-                previousState != state.State || peakChanged);
+                "ExitProfitCollapse",
+                $"Projected net {projection.ProjectedNetPnl:F6} < close floor {closeFloor:F6} after arming (peak={state.PeakProjectedNetPnl:F6}).",
+                true,
+                true);
         }
 
         if (state.LastTransitionAtUtc.HasValue &&
@@ -434,8 +497,8 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
             new SpotFuturesCrossMarketCloseRequest(
                 SpotFuturesCrossMarketSettings.Load(configuration, hostEnvironment.ContentRootPath).ForSymbol(position.Symbol),
                 position,
-                PositionExitReason.RollingProfit,
-                CloseReason.RollingProfit,
+                decision.ExitReason,
+                decision.CloseReason,
                 $"{decision.Label}: {decision.RejectionReason}",
                 correlationId,
                 OrderSource.AdaptiveRollingProfitExitV1,
@@ -458,6 +521,8 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
             state.LastDecision = decision.Label;
             state.LastRejectionReason = decision.RejectionReason;
             state.LastTransitionAtUtc = DateTime.UtcNow;
+            _exitConfirmations.TryRemove(position.Id, out _);
+            _lossCutConfirmations.TryRemove(position.Id, out _);
             await rollingRepository.UpsertStateAsync(state, cancellationToken);
             await PersistRollingDecisionAsync(decisionRepository, position, decision, DecisionStatus.Executed, closeResult.Order, null, cancellationToken);
             await StartCounterfactualAsync(rollingRepository, state, closeResult.ClosedPosition, closeResult.Order.Price, cancellationToken);
@@ -470,7 +535,11 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
             return;
         }
 
-        state.State = closeResult.DuplicatePrevented ? AdaptiveRollingProfitExitState.Closing : AdaptiveRollingProfitExitState.ProfitArmed;
+        state.State = closeResult.DuplicatePrevented
+            ? AdaptiveRollingProfitExitState.Closing
+            : decision.ExitReason == PositionExitReason.RiskExit
+                ? AdaptiveRollingProfitExitState.Monitoring
+                : AdaptiveRollingProfitExitState.ProfitArmed;
         state.LastDecision = closeResult.DuplicatePrevented ? "DuplicateClosePrevented" : "RollingCloseFailed";
         state.LastRejectionReason = closeResult.Error;
         state.LastTransitionAtUtc = DateTime.UtcNow;
@@ -799,6 +868,22 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
         return absoluteTriggered || percentTriggered;
     }
 
+    private bool ShouldLogMarketDataDegraded(long positionId, string reason, DateTime now)
+    {
+        const int minIntervalSeconds = 30;
+        var next = (reason, now);
+        var shouldLog = true;
+        _lastMarketDataDegradedLog.AddOrUpdate(
+            positionId,
+            next,
+            (_, previous) =>
+            {
+                shouldLog = previous.Reason != reason || (now - previous.LoggedAtUtc).TotalSeconds >= minIntervalSeconds;
+                return shouldLog ? next : previous;
+            });
+        return shouldLog;
+    }
+
     private static AdaptiveRollingTrendFlow ComputeTrendFlowScore(
         OrderSide side,
         AdaptiveRollingMarketDataSnapshot snapshot,
@@ -827,7 +912,13 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
     private static string Truncate(string value, int max)
         => string.IsNullOrEmpty(value) || value.Length <= max ? value : value[..max];
 
-    private sealed record RollingDecision(string Label, string? RejectionReason, bool ShouldClose, bool StateTransitioned);
+    private sealed record RollingDecision(
+        string Label,
+        string? RejectionReason,
+        bool ShouldClose,
+        bool StateTransitioned,
+        PositionExitReason ExitReason = PositionExitReason.RollingProfit,
+        CloseReason CloseReason = CloseReason.RollingProfit);
 }
 
 public sealed record AdaptiveRollingTrendFlow(

@@ -15,7 +15,7 @@ public sealed record AdaptiveRollingProfitExitV1Settings
     public int EvaluationIntervalMs { get; init; } = 1000;
     public int MarketDataMaxAgeMs { get; init; } = 3000;
     public int StreamLatencyDegradedMs { get; init; } = 2000;
-    public string WebSocketBaseUrl { get; init; } = "wss://stream.binancefuture.com/public/stream";
+    public string WebSocketBaseUrl { get; init; } = "wss://stream.binancefuture.com/stream";
     public int WebSocketReconnectMinDelayMs { get; init; } = 1000;
     public int WebSocketReconnectMaxDelayMs { get; init; } = 30000;
 
@@ -37,9 +37,9 @@ public sealed record AdaptiveRollingProfitExitV1Settings
     public decimal AggressiveFlowWeight { get; init; } = 35m;
     public decimal VelocityWeight { get; init; } = 35m;
     public decimal MicropriceWeight { get; init; } = 10m;
-    public int FlowWindowSeconds { get; init; } = 8;
-    public int VelocityWindowSeconds { get; init; } = 8;
-    public decimal VelocityReferenceBps { get; init; } = 8m;
+    public int FlowWindowSeconds { get; init; } = 60;
+    public int VelocityWindowSeconds { get; init; } = 60;
+    public decimal VelocityReferenceBps { get; init; } = 10m;
 
     public decimal LatencyReserveBps { get; init; } = 2m;
     public decimal VolatilityReserveMultiplier { get; init; } = 0.50m;
@@ -51,6 +51,13 @@ public sealed record AdaptiveRollingProfitExitV1Settings
     public int FeeRefreshLockSeconds { get; init; } = 120;
     public int FeeRefreshMaxRetries { get; init; } = 3;
     public int FundingRefreshIntervalMinutes { get; init; } = 15;
+
+    public bool EnableEarlyLossCut { get; init; } = true;
+    public decimal EarlyLossCutGrossLossBps { get; init; } = 10m;
+    public decimal EarlyLossCutMinGrossLossUsdt { get; init; } = 5m;
+    public decimal EarlyLossCutTrendScoreMax { get; init; } = -25m;
+    public int EarlyLossCutConfirmationObservations { get; init; } = 10;
+    public int EarlyLossCutMinPositionAgeSeconds { get; init; } = 120;
 
     public bool EnableHardProfitLock { get; init; } = true;
     public decimal HardProfitLockTierUsdt { get; init; } = 1.50m;
@@ -82,7 +89,7 @@ public sealed record AdaptiveRollingProfitExitV1Settings
             StreamLatencyDegradedMs = Math.Max(250, section.GetValue("StreamLatencyDegradedMs", 2000)),
             WebSocketBaseUrl = section.GetValue<string>("WebSocketBaseUrl") is { Length: > 0 } ws
                 ? ws
-                : "wss://stream.binancefuture.com/public/stream",
+                : "wss://stream.binancefuture.com/stream",
             WebSocketReconnectMinDelayMs = Math.Max(250, section.GetValue("WebSocketReconnectMinDelayMs", 1000)),
             WebSocketReconnectMaxDelayMs = Math.Max(1000, section.GetValue("WebSocketReconnectMaxDelayMs", 30000)),
             MinNetProfitUsdt = Math.Max(0m, section.GetValue("MinNetProfitUsdt", 0.35m)),
@@ -102,9 +109,9 @@ public sealed record AdaptiveRollingProfitExitV1Settings
             AggressiveFlowWeight = Math.Max(0m, section.GetValue("AggressiveFlowWeight", 35m)),
             VelocityWeight = Math.Max(0m, section.GetValue("VelocityWeight", 35m)),
             MicropriceWeight = Math.Max(0m, section.GetValue("MicropriceWeight", 10m)),
-            FlowWindowSeconds = Math.Max(1, section.GetValue("FlowWindowSeconds", 8)),
-            VelocityWindowSeconds = Math.Max(1, section.GetValue("VelocityWindowSeconds", 8)),
-            VelocityReferenceBps = Math.Max(0.1m, section.GetValue("VelocityReferenceBps", 8m)),
+            FlowWindowSeconds = Math.Max(1, section.GetValue("FlowWindowSeconds", 60)),
+            VelocityWindowSeconds = Math.Max(1, section.GetValue("VelocityWindowSeconds", 60)),
+            VelocityReferenceBps = Math.Max(0.1m, section.GetValue("VelocityReferenceBps", 10m)),
             LatencyReserveBps = Math.Max(0m, section.GetValue("LatencyReserveBps", 2m)),
             VolatilityReserveMultiplier = Math.Max(0m, section.GetValue("VolatilityReserveMultiplier", 0.50m)),
             ConservativeFallbackTakerCommissionRate = PositiveRate(section.GetValue("ConservativeFallbackTakerCommissionRate", 0.001m)),
@@ -115,6 +122,12 @@ public sealed record AdaptiveRollingProfitExitV1Settings
             FeeRefreshLockSeconds = Math.Max(10, section.GetValue("FeeRefreshLockSeconds", 120)),
             FeeRefreshMaxRetries = Math.Max(1, section.GetValue("FeeRefreshMaxRetries", 3)),
             FundingRefreshIntervalMinutes = Math.Max(1, section.GetValue("FundingRefreshIntervalMinutes", 15)),
+            EnableEarlyLossCut = section.GetValue("EnableEarlyLossCut", true),
+            EarlyLossCutGrossLossBps = Math.Max(1m, section.GetValue("EarlyLossCutGrossLossBps", 10m)),
+            EarlyLossCutMinGrossLossUsdt = Math.Max(0m, section.GetValue("EarlyLossCutMinGrossLossUsdt", 5m)),
+            EarlyLossCutTrendScoreMax = Math.Min(0m, section.GetValue("EarlyLossCutTrendScoreMax", -25m)),
+            EarlyLossCutConfirmationObservations = Math.Max(1, section.GetValue("EarlyLossCutConfirmationObservations", 10)),
+            EarlyLossCutMinPositionAgeSeconds = Math.Max(0, section.GetValue("EarlyLossCutMinPositionAgeSeconds", 120)),
             EnableHardProfitLock = section.GetValue("EnableHardProfitLock", true),
             HardProfitLockTierUsdt = Math.Max(0m, section.GetValue("HardProfitLockTierUsdt", 1.50m)),
             HardProfitLockTierBps = Math.Max(0m, section.GetValue("HardProfitLockTierBps", 12m)),
@@ -142,6 +155,9 @@ public sealed record AdaptiveRollingProfitExitV1Settings
 
     public decimal HardProfitTier(decimal entryNotional)
         => Math.Max(HardProfitLockTierUsdt, entryNotional * HardProfitLockTierBps / 10_000m);
+
+    public decimal EarlyLossCutGrossFloor(decimal entryNotional)
+        => Math.Max(EarlyLossCutMinGrossLossUsdt, entryNotional * EarlyLossCutGrossLossBps / 10_000m);
 
     private static string CleanKey(string? value, string fallback)
     {
