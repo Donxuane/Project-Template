@@ -271,6 +271,45 @@ public class OrderRepository(IDbConnection connection) : IOrderRepository
         return result.HasValue;
     }
 
+    public async Task<bool> HasActiveCloseOrderForPositionByEnvironmentAsync(long parentPositionId, string executionEnvironment, CancellationToken cancellationToken = default)
+    {
+        const string sql = """
+            SELECT 1
+            FROM orders
+            WHERE parent_position_id = @ParentPositionId
+              AND close_reason <> @CloseReasonNone
+              AND execution_environment = @ExecutionEnvironment
+              AND status <> ALL(@TerminalStatuses)
+              AND processing_status <> ALL(@AccountedProcessingStatuses)
+            LIMIT 1;
+            """;
+
+        var result = await connection.QuerySingleOrDefaultAsync<int?>(
+            new CommandDefinition(
+                sql,
+                new
+                {
+                    ParentPositionId = parentPositionId,
+                    CloseReasonNone = (int)CloseReason.None,
+                    ExecutionEnvironment = executionEnvironment,
+                    TerminalStatuses = new[]
+                    {
+                        (int)OrderStatuses.CANCELED,
+                        (int)OrderStatuses.REJECTED,
+                        (int)OrderStatuses.EXPIRED,
+                        (int)OrderStatuses.EXPIRED_IN_MATCH
+                    },
+                    AccountedProcessingStatuses = new[]
+                    {
+                        (int)ProcessingStatus.PositionUpdated,
+                        (int)ProcessingStatus.Completed
+                    }
+                },
+                cancellationToken: cancellationToken));
+
+        return result.HasValue;
+    }
+
     public async Task<IReadOnlyList<Order>> GetOpenOrdersForWorkerAsync(IDbTransaction transaction, TradingSymbol? symbol, int limit, CancellationToken cancellationToken = default)
     {
         var openStatuses = new[]

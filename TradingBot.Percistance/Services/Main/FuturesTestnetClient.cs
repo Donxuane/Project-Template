@@ -76,7 +76,8 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
         OrderSide side,
         decimal quantity,
         bool reduceOnly,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? positionSide = null)
     {
         var query = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -88,6 +89,8 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
         };
         if (reduceOnly)
             query["reduceOnly"] = "true";
+        if (!string.IsNullOrWhiteSpace(positionSide))
+            query["positionSide"] = positionSide;
 
         var body = await SendSignedAsync(HttpMethod.Post, "/fapi/v1/order", query, cancellationToken);
         using var doc = JsonDocument.Parse(body);
@@ -126,6 +129,108 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
         }
 
         throw new InvalidOperationException($"FuturesTestnet balance query returned no entry for asset '{asset}'.");
+    }
+
+    public async Task<FuturesTestnetCommissionRate> GetCommissionRateAsync(string symbol, CancellationToken cancellationToken = default)
+    {
+        var query = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["symbol"] = symbol
+        };
+
+        var body = await SendSignedAsync(HttpMethod.Get, "/fapi/v1/commissionRate", query, cancellationToken);
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+
+        return new FuturesTestnetCommissionRate
+        {
+            Symbol = GetString(root, "symbol") ?? symbol,
+            MakerCommissionRate = GetDecimal(root, "makerCommissionRate"),
+            TakerCommissionRate = GetDecimal(root, "takerCommissionRate"),
+            RpiCommissionRate = root.TryGetProperty("rpiCommissionRate", out var rpi)
+                ? ParseDecimal(rpi)
+                : null
+        };
+    }
+
+    public async Task<FuturesTestnetPositionRisk?> GetPositionRiskAsync(string symbol, CancellationToken cancellationToken = default)
+    {
+        var query = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["symbol"] = symbol
+        };
+
+        var body = await SendSignedAsync(HttpMethod.Get, "/fapi/v2/positionRisk", query, cancellationToken);
+        using var doc = JsonDocument.Parse(body);
+
+        JsonElement? selected = null;
+        if (doc.RootElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                if (string.Equals(GetString(el, "symbol"), symbol, StringComparison.OrdinalIgnoreCase))
+                {
+                    selected = el;
+                    break;
+                }
+            }
+        }
+        else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+        {
+            selected = doc.RootElement;
+        }
+
+        if (selected is null)
+            return null;
+
+        var root = selected.Value;
+        return new FuturesTestnetPositionRisk
+        {
+            Symbol = GetString(root, "symbol") ?? symbol,
+            PositionAmt = GetDecimal(root, "positionAmt"),
+            EntryPrice = GetDecimal(root, "entryPrice"),
+            MarkPrice = GetDecimal(root, "markPrice"),
+            UnrealizedProfit = GetDecimal(root, "unRealizedProfit"),
+            PositionSide = GetString(root, "positionSide") ?? "BOTH",
+            UpdateTimeMs = GetLong(root, "updateTime")
+        };
+    }
+
+    public async Task<IReadOnlyList<FuturesTestnetIncome>> GetIncomeAsync(
+        string symbol,
+        string incomeType,
+        DateTime startTimeUtc,
+        DateTime endTimeUtc,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["symbol"] = symbol,
+            ["incomeType"] = incomeType,
+            ["startTime"] = new DateTimeOffset(DateTime.SpecifyKind(startTimeUtc, DateTimeKind.Utc)).ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture),
+            ["endTime"] = new DateTimeOffset(DateTime.SpecifyKind(endTimeUtc, DateTimeKind.Utc)).ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture),
+            ["limit"] = Math.Clamp(limit, 1, 1000).ToString(CultureInfo.InvariantCulture)
+        };
+
+        var body = await SendSignedAsync(HttpMethod.Get, "/fapi/v1/income", query, cancellationToken);
+        using var doc = JsonDocument.Parse(body);
+        var rows = new List<FuturesTestnetIncome>();
+
+        foreach (var el in doc.RootElement.EnumerateArray())
+        {
+            rows.Add(new FuturesTestnetIncome
+            {
+                Symbol = GetString(el, "symbol") ?? symbol,
+                IncomeType = GetString(el, "incomeType") ?? incomeType,
+                Income = GetDecimal(el, "income"),
+                Asset = GetString(el, "asset") ?? string.Empty,
+                TimeMs = GetLong(el, "time"),
+                Info = GetString(el, "info")
+            });
+        }
+
+        return rows;
     }
 
     public async Task<FuturesTestnetOrderResult> GetOrderAsync(

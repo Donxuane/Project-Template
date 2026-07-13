@@ -10,5 +10,6 @@ public enum CloseReason
     Reconciliation = 5,
     OppositeSignal = 6,
     RiskExit = 7,
+    RollingProfit = 8,
     Unknown = 99
 }

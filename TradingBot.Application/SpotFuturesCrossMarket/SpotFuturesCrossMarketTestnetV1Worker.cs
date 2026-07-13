@@ -529,60 +529,20 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         string correlationId,
         CancellationToken ct)
     {
-        if (!settings.CanPlaceTestnetOrders)
-        {
-            logger.LogWarning("SpotFuturesCrossMarket close skipped: testnet orders not allowed by config. PositionId={PositionId}", openPosition.Id);
-            return null;
-        }
+        var closeService = sp.GetRequiredService<SpotFuturesCrossMarketCloseOrderService>();
+        var result = await closeService.CloseAsync(
+            new SpotFuturesCrossMarketCloseRequest(
+                settings,
+                openPosition,
+                exitReason,
+                closeReason,
+                reason,
+                correlationId,
+                OrderSource.SpotFuturesCrossMarketTestnetV1,
+                DateTime.UtcNow),
+            ct);
 
-        var futuresClient = sp.GetRequiredService<IFuturesTestnetClient>();
-        var orderRepo = sp.GetRequiredService<IOrderRepository>();
-        var accounting = sp.GetRequiredService<SpotFuturesCrossMarketAccounting>();
-
-        var closeSide = openPosition.Side == OrderSide.BUY ? OrderSide.SELL : OrderSide.BUY;
-
-        logger.LogInformation(
-            "SpotFuturesCrossMarket ORDER INTENT (exit). PositionId={PositionId} Symbol={Symbol} Side={Side} Quantity={Quantity} ExitReason={ExitReason} CorrelationId={CorrelationId}",
-            openPosition.Id, openPosition.Symbol, closeSide, openPosition.Quantity, exitReason, correlationId);
-
-        try
-        {
-            var result = await futuresClient.PlaceMarketOrderAsync(openPosition.Symbol.ToString(), closeSide, openPosition.Quantity, reduceOnly: true, ct);
-            var (fills, avgPrice, filledQty, exitFee) = await ResolveFillAsync(futuresClient, openPosition.Symbol.ToString(), result, ct);
-            var exitPrice = avgPrice > 0m ? avgPrice : openPosition.AveragePrice;
-            var executedQty = filledQty > 0m ? filledQty : openPosition.Quantity;
-
-            var order = new Order
-            {
-                ExchangeOrderId = result.OrderId,
-                CorrelationId = correlationId,
-                ParentPositionId = openPosition.Id,
-                OrderSource = OrderSource.SpotFuturesCrossMarketTestnetV1,
-                CloseReason = closeReason,
-                Symbol = openPosition.Symbol,
-                Side = closeSide,
-                Status = result.Status.ToOrderStatus(),
-                ProcessingStatus = ProcessingStatus.PositionUpdated,
-                Price = exitPrice,
-                Quantity = executedQty,
-                ExecutionEnvironment = Env
-            };
-            await orderRepo.InsertAsync(order, ct);
-            await PersistExecutionsAsync(sp, order, fills, result, openPosition.Symbol, closeSide, exitPrice, executedQty, ct);
-
-            var closedPosition = await accounting.CloseAsync(openPosition, exitPrice, exitFee, exitReason, DateTime.UtcNow, ct);
-
-            logger.LogInformation(
-                "SpotFuturesCrossMarket EXIT FILLED. PositionId={PositionId} ExitReason={ExitReason} ExitPrice={ExitPrice} RealizedPnl={RealizedPnl} Reason={Reason} LocalOrderId={LocalOrderId} ExchangeOrderId={ExchangeOrderId}",
-                closedPosition.Id, exitReason, exitPrice, closedPosition.RealizedPnl, reason, order.Id, order.ExchangeOrderId);
-
-            return order;
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "SpotFuturesCrossMarket exit order placement failed. PositionId={PositionId} CorrelationId={CorrelationId}", openPosition.Id, correlationId);
-            return null;
-        }
+        return result.Order;
     }
 
     private static PositionExitReason? ResolveProtectiveExitReason(
