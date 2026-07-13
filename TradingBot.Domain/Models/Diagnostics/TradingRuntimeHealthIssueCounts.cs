@@ -10,4 +10,5 @@ public sealed class TradingRuntimeHealthIssueCounts
     public int CloseSafetyCritical { get; set; }
     public int CloseSafetyWarnings { get; set; }
     public int BalanceWarnings { get; set; }
+    public int RollingWarnings { get; set; }
 }

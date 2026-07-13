@@ -26,6 +26,7 @@ public sealed class TradingHealthDiagnosticsService(
         AddLifecycleIssues(metrics, criticalIssues, counts);
         AddCloseSafetyIssues(metrics, criticalIssues, warnings, counts);
         AddBalanceIssues(metrics, checkedAt, effectiveMaxAge, warnings, counts);
+        AddRollingIssues(metrics, warnings, counts);
 
         counts.Critical = criticalIssues.Count;
         counts.Warnings = warnings.Count;
@@ -167,6 +168,24 @@ public sealed class TradingHealthDiagnosticsService(
         {
             warnings.Add("balance_snapshot_history is empty.");
             counts.BalanceWarnings++;
+        }
+    }
+
+    private static void AddRollingIssues(
+        TradingRuntimeHealthMetrics metrics,
+        List<string> warnings,
+        TradingRuntimeHealthIssueCounts counts)
+    {
+        if (!metrics.HasAdaptiveRollingProfitExitStatesTable)
+        {
+            warnings.Add("AdaptiveRollingProfitExitV1 state table is missing; rolling exits remain unavailable until migration 014 is applied.");
+            counts.RollingWarnings++;
+        }
+
+        if (!metrics.HasFuturesCommissionRatesTable)
+        {
+            warnings.Add("Futures commission rate history table is missing; account-specific fee refresh cannot persist until migration 014 is applied.");
+            counts.RollingWarnings++;
         }
     }
 

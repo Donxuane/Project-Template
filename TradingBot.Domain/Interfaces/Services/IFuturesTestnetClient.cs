@@ -18,7 +18,8 @@ public interface IFuturesTestnetClient
         OrderSide side,
         decimal quantity,
         bool reduceOnly,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? positionSide = null);
 
     Task<IReadOnlyList<FuturesTestnetUserTrade>> GetUserTradesAsync(
         string symbol,
@@ -46,6 +47,21 @@ public interface IFuturesTestnetClient
 
     /// <summary>Wallet + available balance for an asset (signed GET /fapi/v2/balance). Used for balance-based sizing.</summary>
     Task<FuturesTestnetBalance> GetBalanceAsync(string asset, CancellationToken cancellationToken = default);
+
+    /// <summary>Account-specific USD-M futures commission rate (signed GET /fapi/v1/commissionRate).</summary>
+    Task<FuturesTestnetCommissionRate> GetCommissionRateAsync(string symbol, CancellationToken cancellationToken = default);
+
+    /// <summary>Exchange-confirmed open futures position for the symbol (signed GET /fapi/v2/positionRisk).</summary>
+    Task<FuturesTestnetPositionRisk?> GetPositionRiskAsync(string symbol, CancellationToken cancellationToken = default);
+
+    /// <summary>Signed futures income rows, used sparingly for known funding credits/debits.</summary>
+    Task<IReadOnlyList<FuturesTestnetIncome>> GetIncomeAsync(
+        string symbol,
+        string incomeType,
+        DateTime startTimeUtc,
+        DateTime endTimeUtc,
+        int limit,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class FuturesTestnetOrderResult
@@ -114,4 +130,33 @@ public sealed class FuturesTestnetBalance
     /// <summary>Balance available for opening new positions.</summary>
     public decimal AvailableBalance { get; set; }
     public decimal CrossUnrealizedPnl { get; set; }
+}
+
+public sealed class FuturesTestnetCommissionRate
+{
+    public string Symbol { get; set; } = string.Empty;
+    public decimal MakerCommissionRate { get; set; }
+    public decimal TakerCommissionRate { get; set; }
+    public decimal? RpiCommissionRate { get; set; }
+}
+
+public sealed class FuturesTestnetPositionRisk
+{
+    public string Symbol { get; set; } = string.Empty;
+    public decimal PositionAmt { get; set; }
+    public decimal EntryPrice { get; set; }
+    public decimal MarkPrice { get; set; }
+    public decimal UnrealizedProfit { get; set; }
+    public string PositionSide { get; set; } = string.Empty;
+    public long UpdateTimeMs { get; set; }
+}
+
+public sealed class FuturesTestnetIncome
+{
+    public string Symbol { get; set; } = string.Empty;
+    public string IncomeType { get; set; } = string.Empty;
+    public decimal Income { get; set; }
+    public string Asset { get; set; } = string.Empty;
+    public long TimeMs { get; set; }
+    public string? Info { get; set; }
 }

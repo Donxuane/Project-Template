@@ -16,6 +16,8 @@ public interface IOrderRepository
     Task<int> GetInFlightOpeningOrderCountAsync(CancellationToken cancellationToken = default);
     Task<bool> HasInFlightClosingOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default);
     Task<bool> HasActiveCloseOrderForPositionAsync(long parentPositionId, CancellationToken cancellationToken = default);
+    Task<bool> HasActiveCloseOrderForPositionByEnvironmentAsync(long parentPositionId, string executionEnvironment, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("HasActiveCloseOrderForPositionByEnvironmentAsync is not supported by this repository.");
 
     /// <summary>For workers: locks rows with FOR UPDATE SKIP LOCKED, batch limited. Must run inside a transaction.</summary>
     Task<IReadOnlyList<Order>> GetOpenOrdersForWorkerAsync(IDbTransaction transaction, TradingSymbol? symbol, int limit, CancellationToken cancellationToken = default);

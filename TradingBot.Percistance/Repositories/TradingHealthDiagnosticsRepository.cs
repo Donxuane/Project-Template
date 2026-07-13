@@ -43,6 +43,8 @@ public sealed class TradingHealthDiagnosticsRepository(IDbConnection connection)
                       AND column_name = 'is_closing'
                 ) AS HasPositionsIsClosingColumn,
                 to_regclass('public.balance_snapshot_history') IS NOT NULL AS HasBalanceSnapshotHistoryTable,
+                to_regclass('public.adaptive_rolling_profit_exit_states') IS NOT NULL AS HasAdaptiveRollingProfitExitStatesTable,
+                to_regclass('public.futures_commission_rates') IS NOT NULL AS HasFuturesCommissionRatesTable,
 
                 (SELECT COUNT(*) FROM positions WHERE is_open = false AND quantity <> 0) AS ClosedPositionsWithNonZeroQuantity,
                 (SELECT COUNT(*) FROM positions WHERE is_open = false AND is_closing = true) AS ClosedPositionsWithIsClosingTrue,

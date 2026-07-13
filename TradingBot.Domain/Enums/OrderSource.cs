@@ -9,5 +9,6 @@ public enum OrderSource
     Manual = 4,
     Api = 5,
     Eth15TestnetExecution = 6,
-    SpotFuturesCrossMarketTestnetV1 = 7
+    SpotFuturesCrossMarketTestnetV1 = 7,
+    AdaptiveRollingProfitExitV1 = 8
 }

@@ -4,6 +4,8 @@ public sealed class TradingRuntimeHealthMetrics
 {
     public bool HasPositionsIsClosingColumn { get; set; }
     public bool HasBalanceSnapshotHistoryTable { get; set; }
+    public bool HasAdaptiveRollingProfitExitStatesTable { get; set; }
+    public bool HasFuturesCommissionRatesTable { get; set; }
 
     public int ClosedPositionsWithNonZeroQuantity { get; set; }
     public int ClosedPositionsWithIsClosingTrue { get; set; }
