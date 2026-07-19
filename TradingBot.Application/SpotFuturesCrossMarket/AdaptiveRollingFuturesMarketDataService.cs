@@ -55,7 +55,14 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
             };
 
             if (requiredTimes.Any(x => !x.HasValue))
-                return state.ToInvalidSnapshot("MissingRequiredStream", now);
+            {
+                var missing = new List<string>(4);
+                if (!state.LastBookTickerLocalReceiptUtc.HasValue) missing.Add("bookTicker");
+                if (!state.LastDepthLocalReceiptUtc.HasValue) missing.Add("depth");
+                if (!state.LastAggTradeLocalReceiptUtc.HasValue) missing.Add("aggTrade");
+                if (!state.LastMarkPriceLocalReceiptUtc.HasValue) missing.Add("markPrice");
+                return state.ToInvalidSnapshot($"MissingRequiredStream:{string.Join(",", missing)}", now);
+            }
 
             var maxAgeMs = requiredTimes
                 .Where(x => x.HasValue)

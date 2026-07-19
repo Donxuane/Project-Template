@@ -15,7 +15,7 @@ public sealed record AdaptiveRollingProfitExitV1Settings
     public int EvaluationIntervalMs { get; init; } = 1000;
     public int MarketDataMaxAgeMs { get; init; } = 3000;
     public int StreamLatencyDegradedMs { get; init; } = 2000;
-    public string WebSocketBaseUrl { get; init; } = "wss://stream.binancefuture.com/public/stream";
+    public string WebSocketBaseUrl { get; init; } = "wss://stream.binancefuture.com/stream";
     public int WebSocketReconnectMinDelayMs { get; init; } = 1000;
     public int WebSocketReconnectMaxDelayMs { get; init; } = 30000;
 
@@ -82,7 +82,7 @@ public sealed record AdaptiveRollingProfitExitV1Settings
             StreamLatencyDegradedMs = Math.Max(250, section.GetValue("StreamLatencyDegradedMs", 2000)),
             WebSocketBaseUrl = section.GetValue<string>("WebSocketBaseUrl") is { Length: > 0 } ws
                 ? ws
-                : "wss://stream.binancefuture.com/public/stream",
+                : "wss://stream.binancefuture.com/stream",
             WebSocketReconnectMinDelayMs = Math.Max(250, section.GetValue("WebSocketReconnectMinDelayMs", 1000)),
             WebSocketReconnectMaxDelayMs = Math.Max(1000, section.GetValue("WebSocketReconnectMaxDelayMs", 30000)),
             MinNetProfitUsdt = Math.Max(0m, section.GetValue("MinNetProfitUsdt", 0.35m)),

@@ -24,6 +24,7 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
     private readonly ConcurrentDictionary<long, int> _exitConfirmations = new();
     private readonly ConcurrentDictionary<long, DateTime> _lastEvaluationPersistUtc = new();
     private readonly ConcurrentDictionary<long, DateTime> _lastDynamicUpdateUtc = new();
+    private readonly ConcurrentDictionary<long, (string Reason, DateTime LoggedAtUtc)> _lastMarketDataDegradedLog = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -152,13 +153,16 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
             state.LastEvaluatedAtUtc = now;
             await rollingRepository.UpsertStateAsync(state, cancellationToken);
             await PersistEvaluationAsync(rollingRepository, state, position, snapshot, null, "SkippedMarketDataDegraded", state.LastRejectionReason, false, cancellationToken);
-            logger.LogWarning(
-                "AdaptiveRollingProfitExitV1 skipped rolling decision because market data is degraded. PositionId={PositionId} Symbol={Symbol} Reason={Reason} AgeMs={AgeMs} LatencyMs={LatencyMs}",
-                position.Id,
-                position.Symbol,
-                state.LastRejectionReason,
-                snapshot.MarketDataAgeMs,
-                snapshot.StreamLatencyMs);
+            if (ShouldLogMarketDataDegraded(position.Id, state.LastRejectionReason, now))
+            {
+                logger.LogWarning(
+                    "AdaptiveRollingProfitExitV1 skipped rolling decision because market data is degraded. PositionId={PositionId} Symbol={Symbol} Reason={Reason} AgeMs={AgeMs} LatencyMs={LatencyMs}",
+                    position.Id,
+                    position.Symbol,
+                    state.LastRejectionReason,
+                    snapshot.MarketDataAgeMs,
+                    snapshot.StreamLatencyMs);
+            }
             return state;
         }
 
@@ -797,6 +801,22 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
         var absoluteTriggered = absoluteThreshold > 0m && absoluteValue >= absoluteThreshold;
         var percentTriggered = percentThreshold > 0m && percentValue >= percentThreshold;
         return absoluteTriggered || percentTriggered;
+    }
+
+    private bool ShouldLogMarketDataDegraded(long positionId, string reason, DateTime now)
+    {
+        const int minIntervalSeconds = 30;
+        var next = (reason, now);
+        var shouldLog = true;
+        _lastMarketDataDegradedLog.AddOrUpdate(
+            positionId,
+            next,
+            (_, previous) =>
+            {
+                shouldLog = previous.Reason != reason || (now - previous.LoggedAtUtc).TotalSeconds >= minIntervalSeconds;
+                return shouldLog ? next : previous;
+            });
+        return shouldLog;
     }
 
     private static AdaptiveRollingTrendFlow ComputeTrendFlowScore(
