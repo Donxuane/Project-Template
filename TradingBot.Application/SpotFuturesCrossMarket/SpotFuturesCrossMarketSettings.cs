@@ -56,6 +56,12 @@ public sealed record SpotFuturesCrossMarketSettings
     public int MomentumLookbackCandles { get; init; } = 4;
     public int MinEntryTrendConfidenceScore { get; init; } = 45;
     public int MinExitTrendConfidenceScore { get; init; } = 35;
+    public bool EnableEntryQualityFilters { get; init; } = false;
+    public bool RequireEntryClosedCandleDirectionConfirmation { get; init; } = true;
+    public decimal MinEntrySpotMomentumAbsPercent { get; init; } = 0m;
+    public int EntryExhaustionLookbackCandles { get; init; } = 8;
+    public decimal EntryExhaustionExtremeZonePercent { get; init; } = 15m;
+    public decimal EntryExhaustionMinMovePercent { get; init; } = 0.50m;
 
     /// <summary>Both markets' latest closed candles must open within this tolerance to be "in sync".</summary>
     public int MaxCandleMisalignmentSeconds { get; init; } = 5;
@@ -143,6 +149,12 @@ public sealed record SpotFuturesCrossMarketSettings
             MomentumLookbackCandles = Math.Max(1, section.GetValue("MomentumLookbackCandles", 4)),
             MinEntryTrendConfidenceScore = Math.Clamp(section.GetValue("MinEntryTrendConfidenceScore", 45), 0, 100),
             MinExitTrendConfidenceScore = Math.Clamp(section.GetValue("MinExitTrendConfidenceScore", 35), 0, 100),
+            EnableEntryQualityFilters = section.GetValue("EnableEntryQualityFilters", false),
+            RequireEntryClosedCandleDirectionConfirmation = section.GetValue("RequireEntryClosedCandleDirectionConfirmation", true),
+            MinEntrySpotMomentumAbsPercent = Math.Max(0m, section.GetValue("MinEntrySpotMomentumAbsPercent", 0m)),
+            EntryExhaustionLookbackCandles = Math.Max(2, section.GetValue("EntryExhaustionLookbackCandles", 8)),
+            EntryExhaustionExtremeZonePercent = Math.Clamp(section.GetValue("EntryExhaustionExtremeZonePercent", 15m), 0m, 50m),
+            EntryExhaustionMinMovePercent = Math.Max(0m, section.GetValue("EntryExhaustionMinMovePercent", 0.50m)),
             MaxCandleMisalignmentSeconds = Math.Max(0, section.GetValue("MaxCandleMisalignmentSeconds", 5)),
             MaxAbsFundingRateForEntry = Math.Max(0m, section.GetValue("MaxAbsFundingRateForEntry", 0.0008m)),
             MaxAbsBasisPercentForEntry = Math.Max(0m, section.GetValue("MaxAbsBasisPercentForEntry", 1.0m)),

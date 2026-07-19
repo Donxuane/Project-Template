@@ -57,6 +57,20 @@ public class AdaptiveRollingProfitExitV1Tests
     }
 
     [Fact]
+    public void Settings_EarlyLossCut_DefaultsAreSafe()
+    {
+        var settings = AdaptiveRollingProfitExitV1Settings.Load(new ConfigurationBuilder().Build());
+
+        Assert.True(settings.EnableEarlyLossCut);
+        Assert.True(settings.EarlyLossCutTrendScoreMax < 0m);
+        Assert.True(settings.EarlyLossCutConfirmationObservations > 1);
+        // Gross-loss floor must scale with notional: 10bps of 15000 = 15 USDT.
+        Assert.Equal(15m, settings.EarlyLossCutGrossFloor(15_000m));
+        // And never fall below the absolute minimum on small positions.
+        Assert.Equal(5m, settings.EarlyLossCutGrossFloor(100m));
+    }
+
+    [Fact]
     public void Settings_NeverAllowZeroFeeFallback()
     {
         var config = new ConfigurationBuilder()

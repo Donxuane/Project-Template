@@ -1,0 +1,98 @@
+{
+  "GeneratedAtUtc": "2026-07-14T07:36:07.328222Z",
+  "ExecutionEnvironment": "SpotFuturesXTestnetV1",
+  "StrategyName": "SpotFuturesCrossMarketTestnetV1",
+  "TotalTrades": 4,
+  "Wins": 1,
+  "Losses": 3,
+  "WinRate": 0.25,
+  "TotalRealizedPnl": -121.685034280000000000,
+  "ProfitFactor": 0.0736274444960764291490745712,
+  "MaxConsecutiveLosses": 3,
+  "CurrentConsecutiveLosses": 3,
+  "MaxDrawdown": 131.356475920000000000,
+  "OpenPositionCount": 0,
+  "OpenUnrealizedPnl": 0,
+  "LastDecision": "",
+  "LastDecisionReason": "",
+  "Trades": [
+    {
+      "PositionId": 40,
+      "Symbol": "SOLUSDT",
+      "Side": "SELL",
+      "Quantity": 196.590000000000000000,
+      "EntryPrice": 76.060000000000000000,
+      "ExitPrice": 75.950000000000000000,
+      "OpenedAtUtc": "2026-07-13T12:15:28.6933Z",
+      "ClosedAtUtc": "2026-07-13T12:33:32.24984Z",
+      "ExitReason": "RollingProfit",
+      "RealizedPnl": 9.671441640000000000,
+      "CumulativePnl": 9.671441640000000000
+    },
+    {
+      "PositionId": 39,
+      "Symbol": "BNBUSDT",
+      "Side": "BUY",
+      "Quantity": 26.250000000000000000,
+      "EntryPrice": 570.090000000000000000,
+      "ExitPrice": 568.070000000000000000,
+      "OpenedAtUtc": "2026-07-13T11:46:01.751129Z",
+      "ClosedAtUtc": "2026-07-13T12:41:05.103454Z",
+      "ExitReason": "StopLoss",
+      "RealizedPnl": -64.975680000000000000,
+      "CumulativePnl": -55.304238360000000000
+    },
+    {
+      "PositionId": 42,
+      "Symbol": "SOLUSDT",
+      "Side": "SELL",
+      "Quantity": 197.690000000000000000,
+      "EntryPrice": 75.230000000000000000,
+      "ExitPrice": 75.310000000000000000,
+      "OpenedAtUtc": "2026-07-13T13:46:18.572504Z",
+      "ClosedAtUtc": "2026-07-13T13:58:19.199207Z",
+      "ExitReason": "RiskExit",
+      "RealizedPnl": -27.719301040000000000,
+      "CumulativePnl": -83.023539400000000000
+    },
+    {
+      "PositionId": 41,
+      "Symbol": "BNBUSDT",
+      "Side": "SELL",
+      "Quantity": 26.220000000000000000,
+      "EntryPrice": 567.620000000000000000,
+      "ExitPrice": 568.640000000000000000,
+      "OpenedAtUtc": "2026-07-13T13:46:15.456364Z",
+      "ClosedAtUtc": "2026-07-13T14:00:44.707123Z",
+      "ExitReason": "RiskExit",
+      "RealizedPnl": -38.661494880000000000,
+      "CumulativePnl": -121.685034280000000000
+    }
+  ],
+  "EquityCurve": [
+    {
+      "TimestampUtc": "2026-07-13T12:33:32.24984Z",
+      "TradePnl": 9.671441640000000000,
+      "CumulativePnl": 9.671441640000000000,
+      "Drawdown": 0.000000000000000000
+    },
+    {
+      "TimestampUtc": "2026-07-13T12:41:05.103454Z",
+      "TradePnl": -64.975680000000000000,
+      "CumulativePnl": -55.304238360000000000,
+      "Drawdown": 64.975680000000000000
+    },
+    {
+      "TimestampUtc": "2026-07-13T13:58:19.199207Z",
+      "TradePnl": -27.719301040000000000,
+      "CumulativePnl": -83.023539400000000000,
+      "Drawdown": 92.694981040000000000
+    },
+    {
+      "TimestampUtc": "2026-07-13T14:00:44.707123Z",
+      "TradePnl": -38.661494880000000000,
+      "CumulativePnl": -121.685034280000000000,
+      "Drawdown": 131.356475920000000000
+    }
+  ]
+}

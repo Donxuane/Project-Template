@@ -1,0 +1,2 @@
+Warning,Cross-symbol shadow bridge is actual-bot shadow/dry-run integration only. RealOrdersPlaced=false always. No orders are placed.
+EvaluatedAtUtc,CandidateKey,Symbol,Interval,Direction,TargetPercent,StopPercent,ActivationRule,Category,ResearchPromotionStatus,CurrentExecutionReadiness,CanEnterTestnetOrderMode,CurrentForwardTrades,CurrentForwardNetModerate,CurrentForwardNetStressPlus,LatestShadowActivationPassed,LatestShadowEntrySignalPresent,LatestShadowRiskStatus,ExecutionReadinessExplanation,AssignedShadowNotionalUSDT,WouldPlaceOrder,ReasonIfBlocked

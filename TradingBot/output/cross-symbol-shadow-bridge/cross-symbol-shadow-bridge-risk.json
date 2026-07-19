@@ -1,0 +1,12 @@
+{
+  "warning": "Cross-symbol shadow bridge is actual-bot shadow/dry-run integration only. RealOrdersPlaced=false always. No orders are placed.",
+  "evaluatedAtUtc": "2026-07-13T13:33:15.2756803Z",
+  "bridgeStatus": "InputFilesMissing",
+  "realOrdersPlaced": false,
+  "liveFuturesRecommended": false,
+  "allowOrders": false,
+  "allowTestnetOrders": false,
+  "allowRealOrders": false,
+  "shadowOnly": true,
+  "riskRows": []
+}

@@ -1,0 +1,2 @@
+Warning,Cross-symbol shadow bridge is actual-bot shadow/dry-run integration only. RealOrdersPlaced=false always. No orders are placed.
+CandidateKey,Symbol,Category,RiskStatus,ReasonIfBlocked,OrdersPermitted,TestnetOrdersPermitted,RealOrdersPermitted,ShadowOnly
