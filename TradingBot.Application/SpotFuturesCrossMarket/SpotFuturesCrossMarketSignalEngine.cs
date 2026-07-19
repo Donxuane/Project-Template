@@ -108,19 +108,27 @@ public sealed class SpotFuturesCrossMarketSignalEngine(
         var longSignal = EvaluateLongEntry(settings, spotTrend, futuresTrend, spotMomentumPercent, snapshot.FundingRate);
         if (longSignal.Allowed)
         {
+            var entryQuality = EvaluateEntryQuality(settings, snapshot, isLong: true, spotMomentumPercent);
+            if (!entryQuality.Allowed)
+                return Build(CrossMarketAction.NoTrade, $"EntryQualityRejected(OpenLong): {entryQuality.Reason}");
+
             var entryAnchor = snapshot.MarkPrice is > 0m ? snapshot.MarkPrice.Value : snapshot.FuturesClose;
             var stopLoss = entryAnchor * (1m - stopPercent / 100m);
             var takeProfit = entryAnchor * (1m + targetPercent / 100m);
-            return Build(CrossMarketAction.OpenLong, longSignal.Reason, stopLoss, takeProfit);
+            return Build(CrossMarketAction.OpenLong, AppendEntryQuality(longSignal.Reason, entryQuality), stopLoss, takeProfit);
         }
 
         var shortSignal = EvaluateShortEntry(settings, spotTrend, futuresTrend, spotMomentumPercent, snapshot.FundingRate);
         if (shortSignal.Allowed)
         {
+            var entryQuality = EvaluateEntryQuality(settings, snapshot, isLong: false, spotMomentumPercent);
+            if (!entryQuality.Allowed)
+                return Build(CrossMarketAction.NoTrade, $"EntryQualityRejected(OpenShort): {entryQuality.Reason}");
+
             var entryAnchor = snapshot.MarkPrice is > 0m ? snapshot.MarkPrice.Value : snapshot.FuturesClose;
             var stopLoss = entryAnchor * (1m + stopPercent / 100m);
             var takeProfit = entryAnchor * (1m - targetPercent / 100m);
-            return Build(CrossMarketAction.OpenShort, shortSignal.Reason, stopLoss, takeProfit);
+            return Build(CrossMarketAction.OpenShort, AppendEntryQuality(shortSignal.Reason, entryQuality), stopLoss, takeProfit);
         }
 
         var decision = Build(CrossMarketAction.NoTrade, $"NoAlignedSignal: long[{longSignal.Reason}] short[{shortSignal.Reason}]");
@@ -184,6 +192,124 @@ public sealed class SpotFuturesCrossMarketSignalEngine(
 
         return (true,
             $"OpenShort: spot leads bearish (score {spotTrend.ConfidenceScore}, momentum {spotMomentumPercent:F3}%), futures confirms (score {futuresTrend.ConfidenceScore}).");
+    }
+
+    private static (bool Allowed, string Reason, bool Applied) EvaluateEntryQuality(
+        SpotFuturesCrossMarketSettings settings,
+        CrossMarketSnapshot snapshot,
+        bool isLong,
+        decimal spotMomentumPercent)
+    {
+        if (!settings.EnableEntryQualityFilters)
+            return (true, string.Empty, false);
+
+        if (snapshot.Spot is null || snapshot.Futures is null)
+            return (false, "EntryQualityUnavailable(missing spot or futures snapshot)", true);
+
+        var spotCloseMovePercent = LatestCloseMovePercent(snapshot.Spot.ClosePrices);
+        var futuresCloseMovePercent = LatestCloseMovePercent(snapshot.Futures.ClosePrices);
+
+        if (settings.RequireEntryClosedCandleDirectionConfirmation)
+        {
+            var directionConfirmed = isLong
+                ? spotCloseMovePercent > 0m && futuresCloseMovePercent > 0m
+                : spotCloseMovePercent < 0m && futuresCloseMovePercent < 0m;
+
+            if (!directionConfirmed)
+            {
+                var expected = isLong ? "positive" : "negative";
+                return (false,
+                    $"EntryDirectionNotConfirmed(expected {expected} latest closed-candle move on spot and futures; spot={spotCloseMovePercent:F3}%, futures={futuresCloseMovePercent:F3}%)",
+                    true);
+            }
+        }
+
+        if (settings.MinEntrySpotMomentumAbsPercent > 0m)
+        {
+            var momentumConfirmed = isLong
+                ? spotMomentumPercent >= settings.MinEntrySpotMomentumAbsPercent
+                : spotMomentumPercent <= -settings.MinEntrySpotMomentumAbsPercent;
+
+            if (!momentumConfirmed)
+            {
+                var expected = isLong ? ">=" : "<=";
+                var threshold = isLong
+                    ? settings.MinEntrySpotMomentumAbsPercent
+                    : -settings.MinEntrySpotMomentumAbsPercent;
+                return (false,
+                    $"EntryMomentumTooWeak(spot momentum {spotMomentumPercent:F3}% must be {expected} {threshold:F3}%)",
+                    true);
+            }
+        }
+
+        var exhaustion = EvaluateFuturesExhaustion(settings, snapshot.Futures, isLong, futuresCloseMovePercent);
+        if (!exhaustion.Allowed)
+            return (false, exhaustion.Reason, true);
+
+        return (true,
+            $"EntryQualityConfirmed(spotCloseMove={spotCloseMovePercent:F3}%, futuresCloseMove={futuresCloseMovePercent:F3}%, futuresRangePosition={exhaustion.RangePositionPercent:F1}%)",
+            true);
+    }
+
+    private static (bool Allowed, string Reason, decimal RangePositionPercent) EvaluateFuturesExhaustion(
+        SpotFuturesCrossMarketSettings settings,
+        MarketSnapshot futures,
+        bool isLong,
+        decimal futuresCloseMovePercent)
+    {
+        var closes = futures.ClosePrices;
+        var highs = futures.HighPrices;
+        var lows = futures.LowPrices;
+        var lookback = Math.Min(settings.EntryExhaustionLookbackCandles, Math.Min(closes.Count, Math.Min(highs.Count, lows.Count)));
+        if (lookback < 2 || settings.EntryExhaustionExtremeZonePercent <= 0m || settings.EntryExhaustionMinMovePercent <= 0m)
+            return (true, string.Empty, 50m);
+
+        var recentHigh = highs.TakeLast(lookback).Max();
+        var recentLow = lows.TakeLast(lookback).Min();
+        var latestClose = closes[^1];
+        var range = recentHigh - recentLow;
+        if (range <= 0m)
+            return (true, string.Empty, 50m);
+
+        var rangePositionPercent = (latestClose - recentLow) / range * 100m;
+        var latestMoveAbsPercent = Math.Abs(futuresCloseMovePercent);
+        var extremeZone = settings.EntryExhaustionExtremeZonePercent;
+        var oversizedMove = latestMoveAbsPercent >= settings.EntryExhaustionMinMovePercent;
+
+        if (isLong && oversizedMove && rangePositionPercent >= 100m - extremeZone)
+        {
+            return (false,
+                $"EntryExhaustedNearRecentHigh(futures close in upper {extremeZone:F1}% of {lookback}-candle range after {latestMoveAbsPercent:F3}% closed-candle move; rangePosition={rangePositionPercent:F1}%)",
+                rangePositionPercent);
+        }
+
+        if (!isLong && oversizedMove && rangePositionPercent <= extremeZone)
+        {
+            return (false,
+                $"EntryExhaustedNearRecentLow(futures close in lower {extremeZone:F1}% of {lookback}-candle range after {latestMoveAbsPercent:F3}% closed-candle move; rangePosition={rangePositionPercent:F1}%)",
+                rangePositionPercent);
+        }
+
+        return (true, string.Empty, rangePositionPercent);
+    }
+
+    private static string AppendEntryQuality(
+        string signalReason,
+        (bool Allowed, string Reason, bool Applied) entryQuality)
+        => entryQuality.Applied && !string.IsNullOrWhiteSpace(entryQuality.Reason)
+            ? $"{signalReason} {entryQuality.Reason}"
+            : signalReason;
+
+    private static decimal LatestCloseMovePercent(IReadOnlyList<decimal> closes)
+    {
+        if (closes.Count < 2)
+            return 0m;
+
+        var previous = closes[^2];
+        if (previous <= 0m)
+            return 0m;
+
+        return (closes[^1] - previous) / previous * 100m;
     }
 
     private static string? EvaluateLongExit(
