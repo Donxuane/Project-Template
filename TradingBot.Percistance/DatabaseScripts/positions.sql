@@ -15,10 +15,14 @@ CREATE TABLE IF NOT EXISTS positions
     unrealized_pnl numeric(38, 18) NOT NULL DEFAULT 0,
     is_open        boolean        NOT NULL DEFAULT true,
     is_closing     boolean        NOT NULL DEFAULT false,
+    execution_environment varchar(24) NOT NULL,
     created_at     timestamptz    NOT NULL,
     updated_at     timestamptz    NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_positions_symbol_is_open
     ON positions (symbol, is_open);
+
+CREATE INDEX IF NOT EXISTS ix_positions_execution_environment
+    ON positions (execution_environment);
 

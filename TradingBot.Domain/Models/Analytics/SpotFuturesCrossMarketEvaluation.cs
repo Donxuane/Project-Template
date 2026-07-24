@@ -7,8 +7,7 @@ namespace TradingBot.Domain.Models.Analytics;
 /// the synchronized Spot and USD-M Futures indicator snapshots, the cross-market context,
 /// and the resulting decision. One row is persisted for every fully closed candle the
 /// strategy evaluates, including NoTrade cycles, so the entire strategy state history is
-/// reconstructable from the database (mirroring how the live Spot path snapshots state
-/// into trade_execution_decisions).
+/// reconstructable from the database.
 /// </summary>
 public sealed class SpotFuturesCrossMarketEvaluation
 {

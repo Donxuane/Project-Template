@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
-using TradingBot.Domain.Interfaces.Services.Decision;
+using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.Decision;
 
 namespace TradingBot.Application.SpotFuturesCrossMarket;
@@ -46,23 +46,23 @@ public sealed class SpotFuturesCrossMarketSignalEngine(
             decimal expectedMovePercent = 0m,
             decimal? stopLoss = null,
             decimal? takeProfit = null) => new()
-        {
-            Action = action,
-            Reason = reason,
-            SpotTrendState = spotTrend.CurrentTrendState,
-            SpotTrendConfidenceScore = spotTrend.ConfidenceScore,
-            SpotShortMaSlopePercent = spotTrend.ShortMaSlopePercent,
-            SpotTrendStrengthPercent = spotTrend.TrendStrengthPercent,
-            SpotMomentumPercent = spotMomentumPercent,
-            FuturesTrendState = futuresTrend.CurrentTrendState,
-            FuturesTrendConfidenceScore = futuresTrend.ConfidenceScore,
-            FuturesShortMaSlopePercent = futuresTrend.ShortMaSlopePercent,
-            FuturesTrendStrengthPercent = futuresTrend.TrendStrengthPercent,
-            FuturesAtrPercent = futuresAtrPercent,
-            ExpectedMovePercent = expectedMovePercent,
-            StopLossPrice = stopLoss,
-            TakeProfitPrice = takeProfit
-        };
+            {
+                Action = action,
+                Reason = reason,
+                SpotTrendState = spotTrend.CurrentTrendState,
+                SpotTrendConfidenceScore = spotTrend.ConfidenceScore,
+                SpotShortMaSlopePercent = spotTrend.ShortMaSlopePercent,
+                SpotTrendStrengthPercent = spotTrend.TrendStrengthPercent,
+                SpotMomentumPercent = spotMomentumPercent,
+                FuturesTrendState = futuresTrend.CurrentTrendState,
+                FuturesTrendConfidenceScore = futuresTrend.ConfidenceScore,
+                FuturesShortMaSlopePercent = futuresTrend.ShortMaSlopePercent,
+                FuturesTrendStrengthPercent = futuresTrend.TrendStrengthPercent,
+                FuturesAtrPercent = futuresAtrPercent,
+                ExpectedMovePercent = expectedMovePercent,
+                StopLossPrice = stopLoss,
+                TakeProfitPrice = takeProfit
+            };
 
         // Position exits deliberately need agreement from both markets or a full higher-
         // timeframe reversal. The event-driven rolling worker handles fast profit/loss exits.

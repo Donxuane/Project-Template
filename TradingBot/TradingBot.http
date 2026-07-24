@@ -1,6 +1,0 @@
-@TradingBot_HostAddress = http://localhost:5106
-
-GET {{TradingBot_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

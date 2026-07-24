@@ -4,10 +4,46 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\TradingBot.Shared\TradingBot.Shared.csproj" />
+    <Compile Include="Enums\AdaptiveRollingProfitExitState.cs" />
+    <Compile Include="Enums\CloseReason.cs" />
+    <Compile Include="Enums\DecisionStatus.cs" />
+    <Compile Include="Enums\GuardStage.cs" />
+    <Compile Include="Enums\MarketRegime.cs" />
+    <Compile Include="Enums\OrderSource.cs" />
+    <Compile Include="Enums\PositionExitReason.cs" />
+    <Compile Include="Enums\ProcessingStatus.cs" />
+    <Compile Include="Enums\TradeExecutionIntent.cs" />
+    <Compile Include="Enums\TradeSignal.cs" />
+    <Compile Include="Enums\TradingMode.cs" />
+    <Compile Include="Enums\TradingSymbol.cs" />
+    <Compile Include="Enums\TrendState.cs" />
+    <Compile Include="Enums\Binance\OrderSide.cs" />
+    <Compile Include="Enums\Binance\OrderStatuses.cs" />
+    <Compile Include="Extensions\OrderStatusExtensions.cs" />
+    <Compile Include="Interfaces\Repositories\IAdaptiveRollingProfitExitRepository.cs" />
+    <Compile Include="Interfaces\Repositories\IOrderRepository.cs" />
+    <Compile Include="Interfaces\Repositories\IPositionRepository.cs" />
+    <Compile Include="Interfaces\Repositories\ISpotFuturesCrossMarketEvaluationRepository.cs" />
+    <Compile Include="Interfaces\Repositories\ITradeExecutionDecisionsRepository.cs" />
+    <Compile Include="Interfaces\Repositories\ITradeExecutionRepository.cs" />
+    <Compile Include="Interfaces\Services\IFuturesTestnetClient.cs" />
+    <Compile Include="Interfaces\Services\ISpotMarketDataClient.cs" />
+    <Compile Include="Interfaces\Services\Cache\IRedisCacheService.cs" />
+    <Compile Include="Interfaces\Services\IAtrService.cs" />
+    <Compile Include="Interfaces\Services\ITrendStateService.cs" />
+    <Compile Include="Models\Analytics\SpotFuturesCrossMarketEvaluation.cs" />
+    <Compile Include="Models\Decision\MarketSnapshot.cs" />
+    <Compile Include="Models\Decision\TradeExecutionDecisions.cs" />
+    <Compile Include="Models\Decision\TrendAnalysisResult.cs" />
+    <Compile Include="Models\Trading\AdaptiveRollingProfitExitRecords.cs" />
+    <Compile Include="Models\Trading\ExecutionEnvironments.cs" />
+    <Compile Include="Models\Trading\Order.cs" />
+    <Compile Include="Models\Trading\Position.cs" />
+    <Compile Include="Models\Trading\TradeExecution.cs" />
   </ItemGroup>
 
 </Project>

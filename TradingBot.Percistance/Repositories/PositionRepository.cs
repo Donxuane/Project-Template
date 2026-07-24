@@ -1,12 +1,11 @@
 using System.Data;
 using Dapper;
-using TradingBot.Domain.Enums;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Models.Trading;
 
 namespace TradingBot.Percistance.Repositories;
 
-public class PositionRepository(IDbConnection connection) : IPositionRepository
+public sealed class PositionRepository(IDbConnection connection) : IPositionRepository
 {
     public async Task<long> UpsertAsync(Position position, CancellationToken cancellationToken = default)
     {
@@ -24,164 +23,39 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
                     (@Symbol, @Side, @Quantity, @AveragePrice, @StopLossPrice, @TakeProfitPrice, @ExitPrice, @ExitReason, @OpenedAt, @ClosedAt, @RealizedPnl, @UnrealizedPnl, @IsOpen, @IsClosing, @ExecutionEnvironment, @CreatedAt, @UpdatedAt)
                 RETURNING id;
                 """;
-
-            var insertParam = new
-            {
-                Symbol = (int)position.Symbol,
-                Side = (int)position.Side,
-                position.Quantity,
-                position.AveragePrice,
-                position.StopLossPrice,
-                position.TakeProfitPrice,
-                position.ExitPrice,
-                ExitReason = position.ExitReason.HasValue ? (int)position.ExitReason.Value : (int?)null,
-                position.OpenedAt,
-                position.ClosedAt,
-                position.RealizedPnl,
-                position.UnrealizedPnl,
-                position.IsOpen,
-                position.IsClosing,
-                position.ExecutionEnvironment,
-                position.CreatedAt,
-                position.UpdatedAt
-            };
-            var id = await connection.ExecuteScalarAsync<long>(
-                new CommandDefinition(insertSql, insertParam, cancellationToken: cancellationToken));
-            position.Id = id;
-            return id;
-        }
-        else
-        {
-            const string updateSql = """
-                UPDATE positions
-                SET
-                    symbol = @Symbol,
-                    side = @Side,
-                    quantity = @Quantity,
-                    average_price = @AveragePrice,
-                    stop_loss_price = @StopLossPrice,
-                    take_profit_price = @TakeProfitPrice,
-                    exit_price = @ExitPrice,
-                    exit_reason = @ExitReason,
-                    opened_at = @OpenedAt,
-                    closed_at = @ClosedAt,
-                    realized_pnl = @RealizedPnl,
-                    unrealized_pnl = @UnrealizedPnl,
-                    is_open = @IsOpen,
-                    is_closing = @IsClosing,
-                    execution_environment = @ExecutionEnvironment,
-                    updated_at = @UpdatedAt
-                WHERE id = @Id;
-                """;
-
-            var updateParam = new
-            {
-                position.Id,
-                Symbol = (int)position.Symbol,
-                Side = (int)position.Side,
-                position.Quantity,
-                position.AveragePrice,
-                position.StopLossPrice,
-                position.TakeProfitPrice,
-                position.ExitPrice,
-                ExitReason = position.ExitReason.HasValue ? (int)position.ExitReason.Value : (int?)null,
-                position.OpenedAt,
-                position.ClosedAt,
-                position.RealizedPnl,
-                position.UnrealizedPnl,
-                position.IsOpen,
-                position.IsClosing,
-                position.ExecutionEnvironment,
-                position.UpdatedAt
-            };
-            await connection.ExecuteAsync(new CommandDefinition(updateSql, updateParam, cancellationToken: cancellationToken));
+            position.Id = await connection.ExecuteScalarAsync<long>(
+                new CommandDefinition(insertSql, ToParameters(position), cancellationToken: cancellationToken));
             return position.Id;
         }
-    }
 
-    public async Task<Position?> GetByIdAsync(long id, CancellationToken cancellationToken = default)
-    {
-        const string sql = """
-            SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
-                   take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
-                   closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
-                   is_open AS IsOpen, is_closing AS IsClosing, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
-            FROM positions
+        const string updateSql = """
+            UPDATE positions
+            SET symbol = @Symbol,
+                side = @Side,
+                quantity = @Quantity,
+                average_price = @AveragePrice,
+                stop_loss_price = @StopLossPrice,
+                take_profit_price = @TakeProfitPrice,
+                exit_price = @ExitPrice,
+                exit_reason = @ExitReason,
+                opened_at = @OpenedAt,
+                closed_at = @ClosedAt,
+                realized_pnl = @RealizedPnl,
+                unrealized_pnl = @UnrealizedPnl,
+                is_open = @IsOpen,
+                is_closing = @IsClosing,
+                execution_environment = @ExecutionEnvironment,
+                updated_at = @UpdatedAt
             WHERE id = @Id;
             """;
-
-        return await connection.QuerySingleOrDefaultAsync<Position>(
-            new CommandDefinition(sql, new { Id = id }, cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(
+            new CommandDefinition(updateSql, ToParameters(position), cancellationToken: cancellationToken));
+        return position.Id;
     }
 
-    public async Task<Position?> GetOpenPositionAsync(TradingSymbol symbol, CancellationToken cancellationToken = default)
-    {
-        const string sql = """
-            SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
-                   take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
-                   closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
-                   is_open AS IsOpen, is_closing AS IsClosing, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
-            FROM positions
-            WHERE symbol = @Symbol AND is_open = TRUE
-              AND execution_environment IS NULL
-            LIMIT 1;
-            """;
-
-        return await connection.QuerySingleOrDefaultAsync<Position>(
-            new CommandDefinition(sql, new { Symbol = (int)symbol }, cancellationToken: cancellationToken));
-    }
-
-    public async Task<IReadOnlyList<Position>> GetOpenPositionsAsync(CancellationToken cancellationToken = default)
-    {
-        const string sql = """
-            SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
-                   take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
-                   closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
-                   is_open AS IsOpen, is_closing AS IsClosing, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
-            FROM positions
-            WHERE is_open = TRUE
-              AND execution_environment IS NULL
-            ORDER BY symbol;
-            """;
-
-        var result = await connection.QueryAsync<Position>(
-            new CommandDefinition(sql, cancellationToken: cancellationToken));
-        return result.ToList();
-    }
-
-    public async Task<IReadOnlyList<Position>> GetClosedPositionsAsync(CancellationToken cancellationToken = default)
-    {
-        const string sql = """
-            SELECT id, 
-            symbol, 
-            side, 
-            quantity,
-            average_price AS AveragePrice, 
-            stop_loss_price AS StopLossPrice,
-            take_profit_price AS TakeProfitPrice, 
-            exit_price AS ExitPrice, 
-            exit_reason AS ExitReason, 
-            opened_at AS OpenedAt,
-            closed_at AS ClosedAt,
-            realized_pnl AS RealizedPnl, 
-            unrealized_pnl AS UnrealizedPnl,
-            is_open AS IsOpen,
-            is_closing AS IsClosing,
-            execution_environment AS ExecutionEnvironment,
-            created_at AS CreatedAt, 
-            updated_at AS UpdatedAt
-            FROM positions
-            WHERE is_open = FALSE
-              AND execution_environment IS NULL
-            ORDER BY COALESCE(closed_at, updated_at, created_at), id;
-            """;
-
-        var result = await connection.QueryAsync<Position>(
-            new CommandDefinition(sql, cancellationToken: cancellationToken));
-        return result.ToList();
-    }
-
-    public async Task<bool> TryMarkPositionClosingAsync(long positionId, CancellationToken cancellationToken = default)
+    public async Task<bool> TryMarkPositionClosingAsync(
+        long positionId,
+        CancellationToken cancellationToken = default)
     {
         const string sql = """
             UPDATE positions
@@ -193,21 +67,17 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
               AND quantity > 0
             RETURNING id;
             """;
-
         var updatedId = await connection.QuerySingleOrDefaultAsync<long?>(
             new CommandDefinition(
                 sql,
-                new
-                {
-                    PositionId = positionId,
-                    UpdatedAt = DateTime.UtcNow
-                },
+                new { PositionId = positionId, UpdatedAt = DateTime.UtcNow },
                 cancellationToken: cancellationToken));
-
         return updatedId.HasValue;
     }
 
-    public async Task ClearPositionClosingAsync(long positionId, CancellationToken cancellationToken = default)
+    public Task ClearPositionClosingAsync(
+        long positionId,
+        CancellationToken cancellationToken = default)
     {
         const string sql = """
             UPDATE positions
@@ -215,70 +85,78 @@ public class PositionRepository(IDbConnection connection) : IPositionRepository
                 updated_at = @UpdatedAt
             WHERE id = @PositionId;
             """;
-
-        await connection.ExecuteAsync(
+        return connection.ExecuteAsync(
             new CommandDefinition(
                 sql,
-                new
-                {
-                    PositionId = positionId,
-                    UpdatedAt = DateTime.UtcNow
-                },
+                new { PositionId = positionId, UpdatedAt = DateTime.UtcNow },
                 cancellationToken: cancellationToken));
     }
 
-    public async Task<Position?> GetOpenPositionByEnvironmentAsync(TradingSymbol symbol, string executionEnvironment, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<Position>> GetOpenPositionsByEnvironmentAsync(
+        string executionEnvironment,
+        CancellationToken cancellationToken = default)
     {
         const string sql = """
             SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
-                   take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
-                   closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
-                   is_open AS IsOpen, is_closing AS IsClosing, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
-            FROM positions
-            WHERE symbol = @Symbol AND is_open = TRUE
-              AND execution_environment = @ExecutionEnvironment
-            ORDER BY id DESC
-            LIMIT 1;
-            """;
-
-        return await connection.QuerySingleOrDefaultAsync<Position>(
-            new CommandDefinition(sql, new { Symbol = (int)symbol, ExecutionEnvironment = executionEnvironment }, cancellationToken: cancellationToken));
-    }
-
-    public async Task<IReadOnlyList<Position>> GetOpenPositionsByEnvironmentAsync(string executionEnvironment, CancellationToken cancellationToken = default)
-    {
-        const string sql = """
-            SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
-                   take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
-                   closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
-                   is_open AS IsOpen, is_closing AS IsClosing, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
+                   take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason,
+                   opened_at AS OpenedAt, closed_at AS ClosedAt, realized_pnl AS RealizedPnl,
+                   unrealized_pnl AS UnrealizedPnl, is_open AS IsOpen, is_closing AS IsClosing,
+                   execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM positions
             WHERE is_open = TRUE
               AND execution_environment = @ExecutionEnvironment
             ORDER BY id;
             """;
-
         var result = await connection.QueryAsync<Position>(
-            new CommandDefinition(sql, new { ExecutionEnvironment = executionEnvironment }, cancellationToken: cancellationToken));
+            new CommandDefinition(
+                sql,
+                new { ExecutionEnvironment = executionEnvironment },
+                cancellationToken: cancellationToken));
         return result.ToList();
     }
 
-    public async Task<IReadOnlyList<Position>> GetClosedPositionsByEnvironmentAsync(string executionEnvironment, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<Position>> GetClosedPositionsByEnvironmentAsync(
+        string executionEnvironment,
+        CancellationToken cancellationToken = default)
     {
         const string sql = """
             SELECT id, symbol, side, quantity, average_price AS AveragePrice, stop_loss_price AS StopLossPrice,
-                   take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason, opened_at AS OpenedAt,
-                   closed_at AS ClosedAt, realized_pnl AS RealizedPnl, unrealized_pnl AS UnrealizedPnl,
-                   is_open AS IsOpen, is_closing AS IsClosing, execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
+                   take_profit_price AS TakeProfitPrice, exit_price AS ExitPrice, exit_reason AS ExitReason,
+                   opened_at AS OpenedAt, closed_at AS ClosedAt, realized_pnl AS RealizedPnl,
+                   unrealized_pnl AS UnrealizedPnl, is_open AS IsOpen, is_closing AS IsClosing,
+                   execution_environment AS ExecutionEnvironment, created_at AS CreatedAt, updated_at AS UpdatedAt
             FROM positions
             WHERE is_open = FALSE
               AND execution_environment = @ExecutionEnvironment
             ORDER BY COALESCE(closed_at, updated_at, created_at), id;
             """;
-
         var result = await connection.QueryAsync<Position>(
-            new CommandDefinition(sql, new { ExecutionEnvironment = executionEnvironment }, cancellationToken: cancellationToken));
+            new CommandDefinition(
+                sql,
+                new { ExecutionEnvironment = executionEnvironment },
+                cancellationToken: cancellationToken));
         return result.ToList();
     }
-}
 
+    private static object ToParameters(Position position) => new
+    {
+        position.Id,
+        Symbol = (int)position.Symbol,
+        Side = (int)position.Side,
+        position.Quantity,
+        position.AveragePrice,
+        position.StopLossPrice,
+        position.TakeProfitPrice,
+        position.ExitPrice,
+        ExitReason = position.ExitReason.HasValue ? (int)position.ExitReason.Value : (int?)null,
+        position.OpenedAt,
+        position.ClosedAt,
+        position.RealizedPnl,
+        position.UnrealizedPnl,
+        position.IsOpen,
+        position.IsClosing,
+        position.ExecutionEnvironment,
+        position.CreatedAt,
+        position.UpdatedAt
+    };
+}

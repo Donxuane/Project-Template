@@ -2,7 +2,7 @@ using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
-using TradingBot.Domain.Extentions;
+using TradingBot.Domain.Extensions;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.Trading;

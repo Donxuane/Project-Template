@@ -3,9 +3,8 @@ using TradingBot.Domain.Enums.Binance;
 namespace TradingBot.Domain.Interfaces.Services;
 
 /// <summary>
-/// Minimal signed client for the Binance Futures Testnet (USD-M, /fapi). Used only by the
-/// ETH15 testnet-validation execution path. Bound exclusively to the testnet base URL and
-/// testnet keys; it cannot reach the live Spot client or production endpoints.
+/// Minimal signed client for the Binance Futures Testnet (USD-M, /fapi). Bound exclusively
+/// to the testnet base URL and testnet keys; it cannot reach production endpoints.
 /// </summary>
 public interface IFuturesTestnetClient
 {

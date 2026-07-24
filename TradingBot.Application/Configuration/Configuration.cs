@@ -1,48 +1,15 @@
 using Microsoft.Extensions.DependencyInjection;
-using MediatR;
-using TradingBot.Application.API;
-using TradingBot.Application.BackgroundHostService;
-using TradingBot.Application.BackgroundHostService.Services;
-using TradingBot.Application.DecisionEngine;
-using TradingBot.Application.Services;
+using TradingBot.Application.SpotFuturesCrossMarket;
 using TradingBot.Domain.Interfaces.Services;
-using TradingBot.Domain.Interfaces.Services.Decision;
 
 namespace TradingBot.Application.Configuration;
 
 public static class Configuration
 {
-    public static IServiceCollection ConfigApplication(this IServiceCollection services)
+    public static IServiceCollection AddSpotFuturesFeature(
+        this IServiceCollection services,
+        Microsoft.Extensions.Configuration.IConfiguration configuration)
     {
-        services.AddScoped<AccountApi>();
-        services.AddScoped<TradingApi>();
-        services.AddScoped<GeneralApi>();
-        //Background Services
-        services.AddSingleton<IFeeProfitGuardExpectedMoveBlockObservability, FeeProfitGuardExpectedMoveBlockObservability>();
-        services.AddHostedService<FeeProfitGuardExpectedMoveBlockReportWorker>();
-        services.AddHostedService<OrderSyncWorker>();
-        services.AddHostedService<TradeSyncWorker>();
-        services.AddHostedService<PositionWorker>();
-        services.AddHostedService<BalanceSyncWorker>();
-        services.AddHostedService<TimeSyncWorker>();
-        services.AddHostedService<MarketDataWorker>();
-        services.AddHostedService<PositionReconciliationWorker>();
-        services.AddHostedService<DecisionWorker>();
-
-        services.AddHostedService<TradeMonitorWorker>();
-        services.AddSingleton<CrossSymbolShadowBridge.CrossSymbolShadowBridgeService>();
-        services.AddHostedService<CrossSymbolShadowBridge.CrossSymbolShadowBridgeStartupValidator>();
-        services.AddHostedService<CrossSymbolShadowBridgeWorker>();
-
-        // ETH15 fixed-frequency forward-incubation -> Binance Futures Testnet execution (testnet-validation only).
-        services.AddScoped<TestnetExecution.Eth15TestnetGateEvaluator>();
-        services.AddScoped<TestnetExecution.Eth15TestnetShortAccounting>();
-        services.AddScoped<TestnetExecution.Eth15TestnetReportWriter>();
-        services.AddHostedService<TestnetExecution.Eth15TestnetExecutionStartupValidator>();
-        services.AddHostedService<TestnetExecution.Eth15TestnetExecutionWorker>();
-
-        // SpotFuturesCrossMarketTestnetV1: synchronized Spot + Futures closed-candle strategy
-        // trading real Binance USD-M Futures TESTNET orders (fake funds only).
         services.AddScoped<SpotFuturesCrossMarket.SpotFuturesCrossMarketDataService>();
         services.AddScoped<SpotFuturesCrossMarket.SpotFuturesCrossMarketSignalEngine>();
         services.AddScoped<SpotFuturesCrossMarket.SpotFuturesCrossMarketAccounting>();
@@ -55,39 +22,9 @@ public static class Configuration
         services.AddHostedService<SpotFuturesCrossMarket.AdaptiveRollingFuturesFeeRefreshWorker>();
         services.AddHostedService<SpotFuturesCrossMarket.AdaptiveRollingProfitExitV1Worker>();
 
-        services.AddScoped<IDecisionService, DecisionService>();
-        services.AddScoped<IMovingAverageStrategy, MovingAverageTrendStrategy>();
-        services.AddScoped<IStrategy>(sp => sp.GetRequiredService<IMovingAverageStrategy>());
-        services.AddScoped<IMarketDataProvider, BinanceMarketDataProvider>();
-        services.AddSingleton<ICandleService, CandleService>();
-        services.AddSingleton<ICandleWarmupService, CandleWarmupService>();
-        services.AddSingleton<IMarketStateTracker, MarketStateTracker>();
-        services.AddSingleton<IPositionManager, PositionManager>();
-        services.AddScoped<IDataRequirementResolver, DataRequirementResolver>();
+        services.Configure<TrendStateSettings>(configuration.GetSection(TrendStateSettings.SectionName));
         services.AddScoped<ITrendStateService, TrendStateService>();
         services.AddScoped<IAtrService, AtrService>();
-        services.AddScoped<IVolatilityService, VolatilityService>();
-        services.AddScoped<IMarketConditionService, MarketConditionService>();
-        services.AddScoped<IRiskEvaluator, RiskEvaluator>();
-        services.AddScoped<IAIValidator, NoOpAIValidator>();
-        services.AddScoped<TradeDecisionService>();
-        services.AddScoped<ITradeExecutionService, TradeExecutionService>();
-        services.AddScoped<ITradeCooldownService, TradeCooldownService>();
-        services.AddScoped<IPositionExecutionGuard, PositionExecutionGuard>();
-        services.AddScoped<IFeeProfitGuard, FeeProfitGuard>();
-        services.AddScoped<ISpotCommissionRateResolver, SpotCommissionRateResolver>();
-        services.AddScoped<IConfidenceGate, ConfidenceGate>();
-        services.AddScoped<ISpotPositionSizingService, SpotPositionSizingService>();
-        services.AddScoped<ITradeAnalyticsService, TradeAnalyticsService>();
-        services.AddScoped<IPositionAccountingService, PositionAccountingService>();
-        services.AddScoped<IPositionReconciliationService, PositionReconciliationService>();
-        services.AddScoped<ITradingHealthDiagnosticsService, TradingHealthDiagnosticsService>();
-
-        services.AddMediatR(config =>
-        {
-            config.RegisterServicesFromAssemblies(typeof(Configuration).Assembly);
-        });
-        services.AddAutoMapper(typeof(Configuration).Assembly);
         return services;
     }
 }

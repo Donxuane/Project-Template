@@ -6,7 +6,7 @@ using TradingBot.Domain.Interfaces.Services.Cache;
 
 namespace TradingBot.Percistance.Services.Shared;
 
-public class RedisCacheService(IConnectionMultiplexer redis, ILogger<RedisCacheService> logger): IRedisCacheService
+public class RedisCacheService(IConnectionMultiplexer redis, ILogger<RedisCacheService> logger) : IRedisCacheService
 {
     public async Task<List<object?>?> GetAllCachedData(List<string> keys)
     {

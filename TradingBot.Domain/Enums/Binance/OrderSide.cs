@@ -3,5 +3,5 @@
 public enum OrderSide
 {
     BUY,
-    SELL    
+    SELL
 }

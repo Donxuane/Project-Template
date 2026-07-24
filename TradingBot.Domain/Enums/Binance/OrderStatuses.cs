@@ -3,10 +3,10 @@
 public enum OrderStatuses
 {
     NEW,
-    PARTIALLY_FILLED, 
+    PARTIALLY_FILLED,
     FILLED,
-    CANCELED, 
-    REJECTED, 
+    CANCELED,
+    REJECTED,
     EXPIRED,
     EXPIRED_IN_MATCH,
     PENDING_CANCEL,

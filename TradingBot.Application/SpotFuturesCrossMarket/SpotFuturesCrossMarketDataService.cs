@@ -2,10 +2,8 @@ using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Enums;
-using TradingBot.Domain.Enums.Endpoints;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.Decision;
-using TradingBot.Domain.Models.MarketData;
 
 namespace TradingBot.Application.SpotFuturesCrossMarket;
 
@@ -17,7 +15,7 @@ namespace TradingBot.Application.SpotFuturesCrossMarket;
 /// two feeds are anchored on the same latest closed candle open time.
 /// </summary>
 public sealed class SpotFuturesCrossMarketDataService(
-    IToolService toolService,
+    ISpotMarketDataClient spotMarketDataClient,
     IFuturesTestnetClient futuresClient,
     ILogger<SpotFuturesCrossMarketDataService> logger)
 {
@@ -181,15 +179,11 @@ public sealed class SpotFuturesCrossMarketDataService(
     {
         try
         {
-            var endpoint = toolService.BinanceEndpointsService.GetEndpoint(MarketData.CandlestickDataKline);
-            var request = new KlineRequest
-            {
-                Symbol = symbol.ToString(),
-                Interval = interval,
-                Limit = Math.Clamp(limit + 1, 2, 1000)
-            };
-
-            var raw = await toolService.BinanceClientService.Call<JsonElement, KlineRequest>(request, endpoint, false);
+            var raw = await spotMarketDataClient.GetKlinesAsync(
+                symbol.ToString(),
+                interval,
+                Math.Clamp(limit + 1, 2, 1000),
+                cancellationToken);
             return KeepClosed(ParseSpotCandles(raw));
         }
         catch (OperationCanceledException)

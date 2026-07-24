@@ -366,3 +366,8 @@ FodyWeavers.xsd
 **/.idea/**
 
 #Ignore properties auto generated files
+
+# Spot/Futures runtime artifacts and local secret files
+TradingBot/output/
+.env
+.env.*

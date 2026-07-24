@@ -2,7 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TradingBot.Application.SpotFuturesCrossMarket;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
-using TradingBot.Domain.Interfaces.Services.Decision;
+using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Models.Decision;
 using Xunit;
 

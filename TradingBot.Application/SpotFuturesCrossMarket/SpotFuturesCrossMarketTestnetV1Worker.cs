@@ -4,7 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
-using TradingBot.Domain.Extentions;
+using TradingBot.Domain.Extensions;
 using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Interfaces.Services.Cache;
@@ -27,8 +27,8 @@ namespace TradingBot.Application.SpotFuturesCrossMarket;
 ///
 /// Every evaluation (including NoTrade) is persisted to the
 /// spot_futures_cross_market_evaluations table and cached in Redis; every intent goes to
-/// trade_execution_decisions; orders/fills/positions reuse the shared tables tagged with the
-/// strategy's execution environment so the live Spot pipeline and the ETH15 worker ignore them.
+/// trade_execution_decisions; orders, fills and positions are tagged with the feature's
+/// execution environment.
 /// </summary>
 public sealed class SpotFuturesCrossMarketTestnetV1Worker(
     IServiceScopeFactory scopeFactory,
@@ -382,32 +382,32 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         switch (decision.Action)
         {
             case CrossMarketAction.OpenLong or CrossMarketAction.OpenShort:
-            {
-                var result = await TryEnterAsync(settings, sp, decision, snapshot, correlationId, ct);
-                executed = result.Executed;
-                positionId = result.PositionId ?? positionId;
-                localOrderId = result.LocalOrderId;
-                break;
-            }
-            case CrossMarketAction.CloseLong or CrossMarketAction.CloseShort when openPosition is not null:
-            {
-                var result = await TryCloseBySignalAsync(settings, sp, openPosition, decision, correlationId, ct);
-                executed = result.Executed;
-                localOrderId = result.LocalOrderId;
-                break;
-            }
-            default:
-            {
-                // Out-of-sync snapshots are retried on the next cycle without an audit row,
-                // otherwise every retry cycle would spam duplicate Skipped decisions.
-                if (snapshot.MarketsInSync)
                 {
-                    await PersistDecisionAsync(sp, settings, decision, correlationId, DecisionStatus.Skipped, GuardStage.None,
-                        executionSuccess: false, localOrderId: null, exchangeOrderId: null, error: null);
+                    var result = await TryEnterAsync(settings, sp, decision, snapshot, correlationId, ct);
+                    executed = result.Executed;
+                    positionId = result.PositionId ?? positionId;
+                    localOrderId = result.LocalOrderId;
+                    break;
                 }
+            case CrossMarketAction.CloseLong or CrossMarketAction.CloseShort when openPosition is not null:
+                {
+                    var result = await TryCloseBySignalAsync(settings, sp, openPosition, decision, correlationId, ct);
+                    executed = result.Executed;
+                    localOrderId = result.LocalOrderId;
+                    break;
+                }
+            default:
+                {
+                    // Out-of-sync snapshots are retried on the next cycle without an audit row,
+                    // otherwise every retry cycle would spam duplicate Skipped decisions.
+                    if (snapshot.MarketsInSync)
+                    {
+                        await PersistDecisionAsync(sp, settings, decision, correlationId, DecisionStatus.Skipped, GuardStage.None,
+                            executionSuccess: false, localOrderId: null, exchangeOrderId: null, error: null);
+                    }
 
-                break;
-            }
+                    break;
+                }
         }
 
         if (snapshot.MarketsInSync)
@@ -516,7 +516,7 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         {
             var accounting = sp.GetRequiredService<SpotFuturesCrossMarketAccounting>();
             var orderRepo = sp.GetRequiredService<IOrderRepository>();
-            var decisionRepo = sp.GetRequiredService<ITradeExecutionDesicionsRepository>();
+            var decisionRepo = sp.GetRequiredService<ITradeExecutionDecisionsRepository>();
 
             try
             {
@@ -604,7 +604,7 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         }
         catch (Exception ex)
         {
-            var decisionRepo = sp.GetRequiredService<ITradeExecutionDesicionsRepository>();
+            var decisionRepo = sp.GetRequiredService<ITradeExecutionDecisionsRepository>();
             await decisionRepo.UpdateDesicionAsync(new TradeExecutionDecisions
             {
                 Id = decisionId,
@@ -680,7 +680,7 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
 
         // Record the protective close as a decision row too (keeps the audit trail complete).
         var intent = openPosition.Side == OrderSide.BUY ? TradeExecutionIntent.CloseLong : TradeExecutionIntent.CloseShort;
-        var decisionRepo = sp.GetRequiredService<ITradeExecutionDesicionsRepository>();
+        var decisionRepo = sp.GetRequiredService<ITradeExecutionDecisionsRepository>();
         await decisionRepo.AddDesicionAsync(new TradeExecutionDecisions
         {
             CorrelationId = correlationId,
@@ -855,7 +855,7 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         long? exchangeOrderId,
         string? error)
     {
-        var decisionRepo = sp.GetRequiredService<ITradeExecutionDesicionsRepository>();
+        var decisionRepo = sp.GetRequiredService<ITradeExecutionDecisionsRepository>();
         var intent = decision.ToExecutionIntent();
 
         var (action, side) = intent switch

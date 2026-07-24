@@ -2,12 +2,11 @@
 param([string]$Symbol = 'BNBUSDT')
 $ErrorActionPreference = 'Stop'
 
-$raw = Get-Content (Join-Path $PSScriptRoot '..\TradingBot\appsettings.json') |
-    Where-Object { $_.TrimStart() -notmatch '^//' } | Out-String
-$settings = $raw | ConvertFrom-Json
-$key = $settings.Eth15TestnetExecution.TestnetApiKey
-$secret = $settings.Eth15TestnetExecution.TestnetSecretKey
-$base = $settings.Eth15TestnetExecution.TestnetBaseUrl
+. (Join-Path $PSScriptRoot 'futures-testnet-settings.ps1')
+$settings = Get-FuturesTestnetSettings
+$key = $settings.ApiKey
+$secret = $settings.SecretKey
+$base = $settings.BaseUrl
 
 $hmac = New-Object System.Security.Cryptography.HMACSHA256
 $hmac.Key = [Text.Encoding]::UTF8.GetBytes($secret)

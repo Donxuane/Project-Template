@@ -10,9 +10,9 @@ CREATE TABLE IF NOT EXISTS orders
     side              integer    NOT NULL,
     status            integer    NOT NULL,
     processing_status integer    NOT NULL DEFAULT 1,
-    sync_retry_count  integer    NOT NULL DEFAULT 0,
     price             numeric(38, 18) NOT NULL,
     quantity          numeric(38, 18) NOT NULL,
+    execution_environment varchar(24) NOT NULL,
     created_at        timestamptz NOT NULL,
     updated_at        timestamptz NOT NULL
 );
@@ -25,4 +25,7 @@ CREATE INDEX IF NOT EXISTS ix_orders_exchange_order_id
 
 CREATE INDEX IF NOT EXISTS ix_orders_processing_status
     ON orders (processing_status);
+
+CREATE INDEX IF NOT EXISTS ix_orders_execution_environment
+    ON orders (execution_environment);
 

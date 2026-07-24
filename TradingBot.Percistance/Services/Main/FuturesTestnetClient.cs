@@ -12,7 +12,7 @@ namespace TradingBot.Percistance.Services.Main;
 
 /// <summary>
 /// Signed Binance Futures Testnet (USD-M) client. Hardwired to the testnet base URL and
-/// testnet keys read from the Eth15TestnetExecution configuration section. Every signed
+/// testnet keys read from the FuturesTestnet configuration section. Every signed
 /// request re-verifies that the base address is a testnet host (defense in depth): it will
 /// never sign a request against a mainnet endpoint.
 /// </summary>
@@ -27,7 +27,6 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
 
     private readonly HttpClient _httpClient;
     private readonly ILogger<FuturesTestnetClient> _logger;
-    private readonly ITimeSyncService _timeSyncService;
     private readonly string? _apiKey;
     private readonly string? _secretKey;
     private readonly long _recvWindow;
@@ -35,16 +34,14 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
     public FuturesTestnetClient(
         HttpClient httpClient,
         IConfiguration configuration,
-        ITimeSyncService timeSyncService,
         ILogger<FuturesTestnetClient> logger)
     {
         _httpClient = httpClient;
-        _timeSyncService = timeSyncService;
         _logger = logger;
-        var section = configuration.GetSection("Eth15TestnetExecution");
-        _apiKey = section["TestnetApiKey"];
-        _secretKey = section["TestnetSecretKey"];
-        _recvWindow = 60000;
+        var section = configuration.GetSection("FuturesTestnet");
+        _apiKey = section["ApiKey"];
+        _secretKey = section["SecretKey"];
+        _recvWindow = Math.Max(5_000, section.GetValue<long?>("ReceiveWindowMilliseconds") ?? 60_000);
 
         if (!string.IsNullOrWhiteSpace(_apiKey))
             _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-MBX-APIKEY", _apiKey);
@@ -552,18 +549,7 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
         if (string.IsNullOrWhiteSpace(_apiKey) || string.IsNullOrWhiteSpace(_secretKey))
             throw new InvalidOperationException("FuturesTestnet credentials are not configured.");
 
-        // Use the server-offset-adjusted timestamp (Redis-cached) to avoid -1021 drift errors;
-        // fall back to local UTC when the offset is not yet cached.
-        long timestampMs;
-        try
-        {
-            timestampMs = await _timeSyncService.GetAdjustedTimestampAsync(cancellationToken);
-        }
-        catch
-        {
-            timestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        }
-
+        var timestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         query["timestamp"] = timestampMs.ToString(CultureInfo.InvariantCulture);
         query["recvWindow"] = _recvWindow.ToString(CultureInfo.InvariantCulture);
 

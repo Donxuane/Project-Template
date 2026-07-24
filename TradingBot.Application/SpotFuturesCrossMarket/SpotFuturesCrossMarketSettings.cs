@@ -9,8 +9,7 @@ namespace TradingBot.Application.SpotFuturesCrossMarket;
 /// Binance USD-M Futures TESTNET orders (fake funds) driven by synchronized Spot + Futures
 /// market data. Real-money trading is impossible by construction: <see cref="AllowRealOrders"/>
 /// is hardcoded false, <see cref="Load"/> throws if config tries to enable it, and orders go
-/// through the testnet-host-locked <c>IFuturesTestnetClient</c> (credentials from the
-/// Eth15TestnetExecution section, which owns the shared testnet HTTP client binding).
+/// through the testnet-host-locked <c>IFuturesTestnetClient</c>.
 /// </summary>
 public sealed record SpotFuturesCrossMarketSettings
 {
@@ -19,7 +18,7 @@ public sealed record SpotFuturesCrossMarketSettings
     public const string ExecutionEnvironment = ExecutionEnvironments.SpotFuturesCrossMarketTestnetV3;
 
     public const string RealOrdersForbiddenError = "SpotFuturesCrossMarketRealOrdersForbidden";
-    public const string SymbolCollisionError = "SpotFuturesCrossMarketSymbolCollidesWithEth15";
+    public const string UnsafeTestnetConfigurationError = "SpotFuturesCrossMarketUnsafeTestnetConfiguration";
 
     public bool Enabled { get; init; }
 
@@ -237,10 +236,7 @@ public sealed record SpotFuturesCrossMarketSettings
     }
 
     /// <summary>
-    /// Fail-fast safety validation shared with the startup validator. Reuses the ETH15
-    /// testnet host/key checks because both paths share the same testnet HTTP client, and
-    /// additionally forbids trading the same symbol as the ETH15 worker while it is enabled
-    /// (one-way position mode on the exchange would net the two books against each other).
+    /// Fail-fast safety validation shared with the startup validator.
     /// </summary>
     public void ValidateTestnetSafety(IConfiguration configuration)
     {
@@ -250,25 +246,23 @@ public sealed record SpotFuturesCrossMarketSettings
         if (!Enabled)
             return;
 
-        // The shared futures testnet client binds to the Eth15TestnetExecution section;
-        // reuse its host / production-key validation.
-        var clientSettings = TestnetExecution.Eth15TestnetExecutionSettings.Load(configuration, AppContext.BaseDirectory);
-        var clientProbe = new TestnetExecution.Eth15TestnetExecutionSettings
+        var section = configuration.GetSection("FuturesTestnet");
+        var baseUrl = section["BaseUrl"] ?? string.Empty;
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps ||
+            (!string.Equals(uri.Host, "demo-fapi.binance.com", StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(uri.Host, "testnet.binancefuture.com", StringComparison.OrdinalIgnoreCase)))
         {
-            Enabled = true,
-            AllowTestnetOrders = AllowTestnetOrders,
-            TestnetBaseUrl = clientSettings.TestnetBaseUrl,
-            TestnetApiKey = clientSettings.TestnetApiKey,
-            TestnetSecretKey = clientSettings.TestnetSecretKey
-        };
-        clientProbe.ValidateTestnetSafety(
-            configuration.GetValue<string>("ApiKey"),
-            configuration.GetValue<string>("SecretKey"));
-
-        var eth15Enabled = configuration.GetValue("Eth15TestnetExecution:Enabled", false);
-        if (eth15Enabled && Symbols.Contains(TestnetExecution.Eth15TestnetExecutionSettings.Symbol))
             throw new InvalidOperationException(
-                $"{SymbolCollisionError}: {SectionName} is configured for {TestnetExecution.Eth15TestnetExecutionSettings.Symbol}, but Eth15TestnetExecution is enabled and trades the same symbol on the same testnet account. Exchange-side netting would corrupt both position books. Pick a different symbol or disable one worker.");
+                $"{UnsafeTestnetConfigurationError}: FuturesTestnet:BaseUrl must use a recognized Binance Futures Testnet HTTPS host.");
+        }
+
+        if (AllowTestnetOrders &&
+            (string.IsNullOrWhiteSpace(section["ApiKey"]) || string.IsNullOrWhiteSpace(section["SecretKey"])))
+        {
+            throw new InvalidOperationException(
+                $"{UnsafeTestnetConfigurationError}: FuturesTestnet:ApiKey and FuturesTestnet:SecretKey are required when testnet ordering is enabled.");
+        }
     }
 
     /// <summary>

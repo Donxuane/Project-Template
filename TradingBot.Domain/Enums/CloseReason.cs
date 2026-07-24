@@ -6,10 +6,8 @@ public enum CloseReason
     StopLoss = 1,
     TakeProfit = 2,
     MaxDuration = 3,
-    ManualClose = 4,
     Reconciliation = 5,
     OppositeSignal = 6,
     RiskExit = 7,
-    RollingProfit = 8,
-    Unknown = 99
+    RollingProfit = 8
 }

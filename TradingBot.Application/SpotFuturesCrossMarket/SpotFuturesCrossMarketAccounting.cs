@@ -8,9 +8,8 @@ namespace TradingBot.Application.SpotFuturesCrossMarket;
 
 /// <summary>
 /// Long- and short-aware linear USD-M PnL accounting for the SpotFuturesCrossMarketTestnetV1
-/// strategy. The shared PositionAccountingService is spot-long-only, so this service computes
-/// both directions and persists into the shared positions table tagged with the strategy's
-/// execution environment so live Spot workers and the ETH15 worker never touch these rows.
+/// strategy. It computes both directions and persists positions under the feature's isolated
+/// execution environment.
 /// </summary>
 public sealed class SpotFuturesCrossMarketAccounting(
     IPositionRepository positionRepository,

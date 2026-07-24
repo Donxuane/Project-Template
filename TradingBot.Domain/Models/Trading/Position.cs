@@ -28,11 +28,6 @@ public class Position
     public bool IsOpen { get; set; }
     public bool IsClosing { get; set; }
 
-    /// <summary>
-    /// Execution venue/environment. Null = live Binance Spot (legacy default).
-    /// "BinanceFuturesTestnet" marks ETH15 testnet-validation positions excluded from live
-    /// monitoring/reconciliation/analytics.
-    /// </summary>
-    public string? ExecutionEnvironment { get; set; }
+    public string ExecutionEnvironment { get; set; } = ExecutionEnvironments.SpotFuturesCrossMarketTestnetV3;
 }
 

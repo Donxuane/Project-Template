@@ -6,8 +6,7 @@ namespace TradingBot.Application.SpotFuturesCrossMarket;
 
 /// <summary>
 /// Fail-fast startup guard for the SpotFuturesCrossMarketTestnetV1 strategy. The application
-/// refuses to start when the configuration could enable real orders, reach a mainnet host,
-/// reuse production keys, or trade the same testnet symbol as the ETH15 worker.
+/// refuses to start when the configuration could enable real orders or reach a mainnet host.
 /// </summary>
 public sealed class SpotFuturesCrossMarketStartupValidator(
     IConfiguration configuration,

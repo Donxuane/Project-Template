@@ -486,7 +486,7 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
     {
         var closeService = sp.GetRequiredService<SpotFuturesCrossMarketCloseOrderService>();
         var rollingRepository = sp.GetRequiredService<IAdaptiveRollingProfitExitRepository>();
-        var decisionRepository = sp.GetRequiredService<ITradeExecutionDesicionsRepository>();
+        var decisionRepository = sp.GetRequiredService<ITradeExecutionDecisionsRepository>();
         var correlationId = Guid.NewGuid().ToString("N");
         var acceptedAt = DateTime.UtcNow;
         state.CloseCorrelationId = correlationId;
@@ -792,7 +792,7 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
     }
 
     private async Task PersistRollingDecisionAsync(
-        ITradeExecutionDesicionsRepository decisionRepository,
+        ITradeExecutionDecisionsRepository decisionRepository,
         Position position,
         RollingDecision rollingDecision,
         DecisionStatus status,

@@ -1,44 +1,16 @@
 using TradingBot.Application.Configuration;
-using TradingBot.Application.DecisionEngine;
-using TradingBot.Configuration;
 using TradingBot.Percistance.Configuration;
-using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.ConfigurationExtention();
-// Add services to the container.
-
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-builder.Services.LoggerConfigure(builder.Configuration);
-builder.Host.UseSerilog();
-builder.Services.ConfigureServices(builder.Configuration);
-builder.Services.ConfigApplication();
-builder.Services.AddSettings(builder.Configuration);
-builder.Services.Configure<TrendStateSettings>(builder.Configuration.GetSection(TrendStateSettings.SectionName));
-builder.Services.AddHostedService<RuntimeTradingConfigurationDiagnosticsHostedService>();
+builder.Services.AddSpotFuturesInfrastructure(builder.Configuration);
+builder.Services.AddSpotFuturesFeature(builder.Configuration);
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+app.MapGet("/", () => Results.Ok(new
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+    Service = "SpotFuturesCrossMarket",
+    Environment = "Binance USD-M Futures Testnet"
+}));
 
-app.UseHttpsRedirection();
-
-app.UseAuthorization();
-
-app.MapControllers();
-
-try
-{
-    app.Run();
-}
-finally
-{
-    Log.CloseAndFlush();
-}
+app.Run();

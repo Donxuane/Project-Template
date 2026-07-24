@@ -6,11 +6,8 @@ public enum PositionExitReason
     StopLoss = 1,
     TakeProfit = 2,
     Time = 3,
-    TrailingStop = 4,
-    ManualClose = 5,
     OppositeSignal = 6,
     Reconciliation = 7,
     RiskExit = 8,
-    RollingProfit = 9,
-    Unknown = 99
+    RollingProfit = 9
 }

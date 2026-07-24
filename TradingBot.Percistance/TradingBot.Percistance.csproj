@@ -4,18 +4,30 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
-
-  <ItemGroup>
-    <Compile Remove="Repositories\NewFolder\**" />
-    <EmbeddedResource Remove="Repositories\NewFolder\**" />
-    <None Remove="Repositories\NewFolder\**" />
-  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Dapper" Version="2.1.66" />
     <PackageReference Include="Npgsql" Version="8.0.8" />
     <PackageReference Include="StackExchange.Redis" Version="2.9.25" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Configuration\Configuration.cs" />
+    <Compile Include="Repositories\AdaptiveRollingProfitExitRepository.cs" />
+    <Compile Include="Repositories\OrderRepository.cs" />
+    <Compile Include="Repositories\PositionRepository.cs" />
+    <Compile Include="Repositories\SpotFuturesCrossMarketEvaluationRepository.cs" />
+    <Compile Include="Repositories\TradeExecutionDecisionsRepository.cs" />
+    <Compile Include="Repositories\TradeExecutionRepository.cs" />
+    <Compile Include="Services\Main\FuturesTestnetClient.cs" />
+    <Compile Include="Services\Main\SpotMarketDataClient.cs" />
+    <Compile Include="Services\Shared\RedisCacheService.cs" />
   </ItemGroup>
 
   <ItemGroup>

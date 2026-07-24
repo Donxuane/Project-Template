@@ -15,18 +15,11 @@ public class Order
     public OrderSide Side { get; set; }
     public OrderStatuses Status { get; set; }
     public ProcessingStatus ProcessingStatus { get; set; }
-    /// <summary>Incremented when transitioned to TradesSyncFailed; reset when TradesSynced.</summary>
-    public int SyncRetryCount { get; set; }
     public decimal Price { get; set; }
     public decimal Quantity { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
-    /// <summary>
-    /// Execution venue/environment. Null = live Binance Spot (legacy default).
-    /// "BinanceFuturesTestnet" marks ETH15 testnet-validation orders that the live Spot
-    /// workers must ignore.
-    /// </summary>
-    public string? ExecutionEnvironment { get; set; }
+    public string ExecutionEnvironment { get; set; } = ExecutionEnvironments.SpotFuturesCrossMarketTestnetV3;
 }
 

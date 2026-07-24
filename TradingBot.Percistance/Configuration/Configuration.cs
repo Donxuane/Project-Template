@@ -1,109 +1,74 @@
+using System.Data;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using StackExchange.Redis;
-using System.Data;
+using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Interfaces.Services.Cache;
-using TradingBot.Domain.Interfaces.Repositories;
-using TradingBot.Percistance.Services;
+using TradingBot.Percistance.Repositories;
 using TradingBot.Percistance.Services.Main;
 using TradingBot.Percistance.Services.Shared;
-using TradingBot.Percistance.Repositories;
-using TradingBot.Shared.Shared.Settings;
 
 namespace TradingBot.Percistance.Configuration;
 
 public static class Configuration
 {
-    public static IServiceCollection ConfigureServices(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddSpotFuturesInfrastructure(
+        this IServiceCollection services,
+        IConfiguration configuration)
     {
-        //services
-        services.AddScoped<IBinanceEndpointsService, BinanceEndpointService>();
-        services.AddScoped<IBinanceSettingsService, BinanceSettingsService>();
-        services.AddScoped<ISlicerService, SlicerService>();
-        services.AddScoped<IRedisCacheService, RedisCacheService>();
-        services.AddScoped<IOrderValidator, OrderValidator>();
-        services.AddScoped<IOrderStatusService, OrderStatusService>();
-        services.AddScoped<ITimeSyncService, TimeSyncService>();
-        services.AddSingleton<IBinanceRateLimiter, BinanceRateLimiter>();
-        services.AddSingleton<ITradeIdempotencyService, TradeIdempotencyService>();
-        services.AddScoped<IPriceCacheService, PriceCacheService>();
-        services.AddScoped<IBinanceOrderNormalizationService, BinanceOrderNormalizationService>();
-
-        //repositories
+        services.AddScoped<IPositionRepository, PositionRepository>();
         services.AddScoped<IOrderRepository, OrderRepository>();
         services.AddScoped<ITradeExecutionRepository, TradeExecutionRepository>();
-        services.AddScoped<IPositionRepository, PositionRepository>();
-        services.AddScoped<IBalanceRepository, BalanceRepository>();
-        services.AddScoped<IAnalyticsRepository, AnalyticsRepository>();
-        services.AddScoped<IReportingsRepository, ReportingsRepository>();
-        services.AddScoped<ITradeExecutionDesicionsRepository, TradeExecutionDesicionsRepository>();
-        services.AddScoped<ITradingHealthDiagnosticsRepository, TradingHealthDiagnosticsRepository>();
+        services.AddScoped<ITradeExecutionDecisionsRepository, TradeExecutionDecisionsRepository>();
         services.AddScoped<ISpotFuturesCrossMarketEvaluationRepository, SpotFuturesCrossMarketEvaluationRepository>();
         services.AddScoped<IAdaptiveRollingProfitExitRepository, AdaptiveRollingProfitExitRepository>();
+        services.AddScoped<IRedisCacheService, RedisCacheService>();
 
-        //risk management
-        services.AddScoped<IRiskManagementService, RiskManagementService>();
-
-        //factories
-        services.AddScoped<Func<IBinanceClientService>>(x => x.GetRequiredService<IBinanceClientService>);
-        services.AddScoped<Func<IBinanceSettingsService>>(x => x.GetRequiredService<IBinanceSettingsService>);
-        services.AddScoped<Func<ISlicerService>>(x => x.GetRequiredService<ISlicerService>);
-        services.AddScoped<Func<IBinanceEndpointsService>>(x => x.GetRequiredService<IBinanceEndpointsService>);
-        services.AddScoped<Func<IOrderValidator>>(x => x.GetRequiredService<IOrderValidator>);
-        services.AddScoped<Func<IAICLinetService>>(x => x.GetRequiredService<IAICLinetService>);
-        services.AddScoped<Func<IRedisCacheService>>(x => x.GetRequiredService<IRedisCacheService>);
-
-        //orchestrators
-        services.AddScoped<IToolService, ToolService>();
-        //client services
-        services.AddHttpClient<IBinanceClientService, BinanceClientService>((sp, client) =>
-        {
-            var cfg = sp.GetRequiredService<IConfiguration>();
-            var baseUrl = cfg.GetValue<string>("BaseURL");
-            if (!string.IsNullOrWhiteSpace(baseUrl))
-                client.BaseAddress = new Uri(baseUrl);
-
-            var timeoutSeconds = Math.Max(1, cfg.GetValue<int?>("Binance:Http:TimeoutSeconds") ?? 15);
-            client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
-        });
-        services.AddHttpClient<IAICLinetService, AIClientService>();
-
-        // ETH15 testnet-validation client. Bound exclusively to the Binance Futures Testnet
-        // base URL; never shares the live Spot client/keys. Real trading is impossible here.
         services.AddHttpClient<IFuturesTestnetClient, FuturesTestnetClient>((sp, client) =>
         {
-            var cfg = sp.GetRequiredService<IConfiguration>();
-            var baseUrl = cfg.GetValue<string>("Eth15TestnetExecution:TestnetBaseUrl");
-            if (string.IsNullOrWhiteSpace(baseUrl))
-                baseUrl = "https://demo-fapi.binance.com";
-            client.BaseAddress = new Uri(baseUrl);
-            client.Timeout = TimeSpan.FromSeconds(Math.Max(1, cfg.GetValue<int?>("Binance:Http:TimeoutSeconds") ?? 15));
+            var currentConfiguration = sp.GetRequiredService<IConfiguration>();
+            var baseUrl = currentConfiguration["FuturesTestnet:BaseUrl"];
+            client.BaseAddress = new Uri(string.IsNullOrWhiteSpace(baseUrl)
+                ? "https://demo-fapi.binance.com"
+                : baseUrl);
+            client.Timeout = TimeSpan.FromSeconds(
+                Math.Max(1, currentConfiguration.GetValue<int?>("FuturesTestnet:HttpTimeoutSeconds") ?? 15));
         });
 
-        services.AddSingleton<IConnectionMultiplexer>(x =>
+        services.AddHttpClient<ISpotMarketDataClient, SpotMarketDataClient>((sp, client) =>
         {
-            var settings = configuration.GetSection("RedisSettings").Get<RedisSettings>()!;
-            var configOptions = new ConfigurationOptions
-            {
-                EndPoints = { settings.Host },
-                Password = settings.Password,
-            };
-            return ConnectionMultiplexer.Connect(configOptions);
+            var currentConfiguration = sp.GetRequiredService<IConfiguration>();
+            var baseUrl = currentConfiguration["SpotMarketData:BaseUrl"];
+            client.BaseAddress = new Uri(string.IsNullOrWhiteSpace(baseUrl)
+                ? "https://testnet.binance.vision"
+                : baseUrl);
+            client.Timeout = TimeSpan.FromSeconds(
+                Math.Max(1, currentConfiguration.GetValue<int?>("SpotMarketData:HttpTimeoutSeconds") ?? 15));
         });
 
-        services.AddScoped<IDbConnection>(x =>
+        services.AddSingleton<IConnectionMultiplexer>(_ =>
         {
-            var mainStorage = configuration.GetSection("ConnectionStrings").Get<ConnectionStrings>()!;
-            return new NpgsqlConnection(mainStorage.MainStorage);
-        });
-        return services;
-    }
+            var host = configuration["Redis:Host"];
+            if (string.IsNullOrWhiteSpace(host))
+                throw new InvalidOperationException("Redis:Host is required.");
 
-    public static IServiceCollection AddSettings(this IServiceCollection services, IConfiguration configuration)
-    {
-        services.Configure<ConnectionStrings>(configuration.GetSection("ConnectionStrings"));
+            var options = ConfigurationOptions.Parse(host);
+            var password = configuration["Redis:Password"];
+            if (!string.IsNullOrWhiteSpace(password))
+                options.Password = password;
+            return ConnectionMultiplexer.Connect(options);
+        });
+
+        services.AddScoped<IDbConnection>(_ =>
+        {
+            var connectionString = configuration.GetConnectionString("MainStorage");
+            if (string.IsNullOrWhiteSpace(connectionString))
+                throw new InvalidOperationException("ConnectionStrings:MainStorage is required.");
+            return new NpgsqlConnection(connectionString);
+        });
+
         return services;
     }
 }

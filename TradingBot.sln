@@ -11,11 +11,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TradingBot.Percistance", "T
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TradingBot.Application", "TradingBot.Application\TradingBot.Application.csproj", "{0ED9D1D9-CA4A-4912-87B0-A6A2F619A7D0}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TradingBot.Shared", "TradingBot.Shared\TradingBot.Shared.csproj", "{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TradingBot.Application.Tests", "TradingBot.Application.Tests\TradingBot.Application.Tests.csproj", "{F6A2D9BE-2BCA-4CD6-A482-C72A368BF0D6}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TradingBot.Backtest", "TradingBot.Backtest\TradingBot.Backtest.csproj", "{6C3984D0-3D73-4D03-96C4-C18D7A3D3E52}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -39,18 +35,10 @@ Global
 		{0ED9D1D9-CA4A-4912-87B0-A6A2F619A7D0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0ED9D1D9-CA4A-4912-87B0-A6A2F619A7D0}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0ED9D1D9-CA4A-4912-87B0-A6A2F619A7D0}.Release|Any CPU.Build.0 = Release|Any CPU
-		{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{A01B6E94-C35D-457B-A6C5-4B5DE97D218B}.Release|Any CPU.Build.0 = Release|Any CPU
 		{F6A2D9BE-2BCA-4CD6-A482-C72A368BF0D6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{F6A2D9BE-2BCA-4CD6-A482-C72A368BF0D6}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F6A2D9BE-2BCA-4CD6-A482-C72A368BF0D6}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F6A2D9BE-2BCA-4CD6-A482-C72A368BF0D6}.Release|Any CPU.Build.0 = Release|Any CPU
-		{6C3984D0-3D73-4D03-96C4-C18D7A3D3E52}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{6C3984D0-3D73-4D03-96C4-C18D7A3D3E52}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{6C3984D0-3D73-4D03-96C4-C18D7A3D3E52}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{6C3984D0-3D73-4D03-96C4-C18D7A3D3E52}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

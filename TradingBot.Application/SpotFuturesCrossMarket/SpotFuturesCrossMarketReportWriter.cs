@@ -8,8 +8,7 @@ namespace TradingBot.Application.SpotFuturesCrossMarket;
 
 /// <summary>
 /// JSON + CSV reporting artifacts for the SpotFuturesCrossMarketTestnetV1 strategy, built
-/// from the environment-scoped positions in the database (same pattern as the ETH15 report
-/// writer): summary, trade history, and equity curve with max drawdown.
+/// from environment-scoped positions: summary, trade history, and equity curve with max drawdown.
 /// </summary>
 public sealed class SpotFuturesCrossMarketReportWriter(ILogger<SpotFuturesCrossMarketReportWriter> logger)
 {
