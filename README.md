@@ -24,6 +24,10 @@ $env:FuturesTestnet__SecretKey = "<testnet-secret-key>"
 Connection strings and Redis values can also be overridden with the normal .NET configuration
 names, for example `ConnectionStrings__MainStorage`, `Redis__Host`, and `Redis__Password`.
 
+Serilog console output and minimum levels are configured under `Serilog` in
+`TradingBot/appsettings.json`. Logs are enriched with the machine name and application name,
+and ASP.NET request logging is enabled.
+
 The Futures client rejects Binance mainnet hosts before sending a request. The feature also
 refuses to start with ordering enabled unless both testnet credentials are available.
 
