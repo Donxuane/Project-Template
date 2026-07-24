@@ -13,9 +13,13 @@ public sealed class MarketSnapshot
     public DateTime? LatestClosedCandleCloseTimeUtc { get; init; }
     public decimal? LatestClosedCandleAgeSeconds { get; init; }
     public decimal? LatestClosedCandleClosePrice { get; init; }
+    public IReadOnlyList<decimal> OpenPrices { get; init; } = [];
     public IReadOnlyList<decimal> HighPrices { get; init; } = [];
     public IReadOnlyList<decimal> LowPrices { get; init; } = [];
     public IReadOnlyList<decimal> ClosePrices { get; init; } = [];
     public IReadOnlyList<decimal> Volumes { get; init; } = [];
+    public IReadOnlyList<decimal> QuoteVolumes { get; init; } = [];
+    public IReadOnlyList<long> TradeCounts { get; init; } = [];
+    public IReadOnlyList<decimal> TakerBuyBaseVolumes { get; init; } = [];
     public DateTime TimestampUtc { get; init; } = DateTime.UtcNow;
 }

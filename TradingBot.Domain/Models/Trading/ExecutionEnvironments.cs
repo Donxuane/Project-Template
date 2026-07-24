@@ -14,4 +14,13 @@ public static class ExecutionEnvironments
     /// Value kept &lt;= 24 chars to fit the execution_environment varchar(24) columns.
     /// </summary>
     public const string SpotFuturesCrossMarketTestnetV1 = "SpotFuturesXTestnetV1";
+
+    /// <summary>
+    /// Multi-timeframe Spot + Futures trend strategy. Kept separate from V1 so risk limits,
+    /// reconciliation and profitability reports never include the retired BNB/SOL book.
+    /// </summary>
+    public const string SpotFuturesCrossMarketTestnetV2 = "SpotFuturesXTestnetV2";
+
+    /// <summary>Aggressive one-minute testnet incubation profile.</summary>
+    public const string SpotFuturesCrossMarketTestnetV3 = "SpotFuturesXTestnetV3";
 }

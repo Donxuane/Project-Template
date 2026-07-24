@@ -19,7 +19,8 @@ public interface IFuturesTestnetClient
         decimal quantity,
         bool reduceOnly,
         CancellationToken cancellationToken = default,
-        string? positionSide = null);
+        string? positionSide = null,
+        string? clientOrderId = null);
 
     Task<IReadOnlyList<FuturesTestnetUserTrade>> GetUserTradesAsync(
         string symbol,

@@ -5,7 +5,7 @@ impossible by construction:
 
 - `AllowRealOrders` is a compile-time `false` and the app **fails to start** if config tries to enable it.
 - Startup **fails** if the configured testnet base URL is a mainnet host (`fapi.binance.com`, `api.binance.com`, ...) or if the testnet keys match the live (production) `ApiKey`/`SecretKey`.
-- Orders are placed only against the Binance Futures Testnet (`https://testnet.binancefuture.com`, `/fapi/*`) using a dedicated client that never shares the live Spot client/keys.
+- Orders are placed only against the Binance Futures demo/test environment (`https://demo-fapi.binance.com`, `/fapi/*`) using a dedicated client that never shares the live Spot client/keys.
 - Defaults: 10 USDT notional, 1x leverage, max 1 open position, max 3 testnet trades/day, hard stop after 5 consecutive losses.
 
 The frozen profile, activation thresholds, entry thresholds, and strategy logic are **not modified**.
@@ -30,7 +30,7 @@ as a `trade_execution_decisions` row. Reports (JSON + CSV) are written every cyc
   "Enabled": false,
   "AllowTestnetOrders": false,
   "AllowRealOrders": false,
-  "TestnetBaseUrl": "https://testnet.binancefuture.com",
+  "TestnetBaseUrl": "https://demo-fapi.binance.com",
   "TestnetApiKey": "",
   "TestnetSecretKey": "",
   "NotionalUsdt": 10,
@@ -72,7 +72,7 @@ pipeline never touches testnet rows. No new tables; trading mode is recorded in
 
 2. Apply the migration `012_add_testnet_execution_isolation.sql` to PostgreSQL.
 
-3. Create Binance Futures **Testnet** API keys at https://testnet.binancefuture.com and set:
+3. Create Binance Futures **demo/test** API keys in Binance's derivatives demo environment and set:
 
    ```json
    "Eth15TestnetExecution": {

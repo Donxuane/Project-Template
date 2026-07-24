@@ -32,6 +32,7 @@ namespace TradingBot.Application.SpotFuturesCrossMarket;
 /// </summary>
 public sealed class SpotFuturesCrossMarketTestnetV1Worker(
     IServiceScopeFactory scopeFactory,
+    AdaptiveRollingFuturesMarketDataService marketDataService,
     IConfiguration configuration,
     IHostEnvironment hostEnvironment,
     ILogger<SpotFuturesCrossMarketTestnetV1Worker> logger) : BackgroundService
@@ -42,6 +43,8 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
     private readonly Dictionary<TradingSymbol, FuturesTestnetSymbolFilters> _symbolFilters = new();
     private readonly Dictionary<TradingSymbol, DateTime> _lastProcessedCandleOpenUtc = new();
     private readonly HashSet<TradingSymbol> _lastProcessedLoaded = new();
+    private DateTime _lastExchangeReconciliationUtc = DateTime.MinValue;
+    private CrossMarketDecision? _lastDecision;
 
     private static string LastCandleRedisKey(SpotFuturesCrossMarketSettings s)
         => $"SpotFuturesXMarket:{s.Symbol}:{s.Interval}:LastProcessedCandleOpenMs";
@@ -69,6 +72,10 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
             return;
         }
 
+        var microstructureSettings = AdaptiveRollingProfitExitV1Settings.Load(configuration);
+        foreach (var symbol in settings.Symbols)
+            await marketDataService.EnsureSubscribedAsync(symbol, microstructureSettings, stoppingToken);
+
         logger.LogInformation(
             "SpotFuturesCrossMarketTestnetV1 worker started. Symbols={Symbols} Interval={Interval} AllowTestnetOrders={AllowTestnetOrders} BalanceSizing={BalanceSizing} AllocationPercent={AllocationPercent} FallbackNotional={Notional} Leverage={Leverage} MaxOpen={MaxOpen} DailyMax={DailyMax} MaxConsecLosses={MaxConsec} CycleSeconds={CycleSeconds}",
             string.Join(",", settings.Symbols), settings.Interval, settings.AllowTestnetOrders,
@@ -79,7 +86,7 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         {
             try
             {
-                await RunCycleAsync(settings, stoppingToken);
+                await RunCycleAsync(settings, microstructureSettings, stoppingToken);
                 await Task.Delay(TimeSpan.FromSeconds(settings.IntervalSeconds), stoppingToken);
             }
             catch (OperationCanceledException)
@@ -101,7 +108,10 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         logger.LogInformation("SpotFuturesCrossMarketTestnetV1 worker stopped.");
     }
 
-    private async Task RunCycleAsync(SpotFuturesCrossMarketSettings settings, CancellationToken ct)
+    private async Task RunCycleAsync(
+        SpotFuturesCrossMarketSettings settings,
+        AdaptiveRollingProfitExitV1Settings microstructureSettings,
+        CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var sp = scope.ServiceProvider;
@@ -110,7 +120,8 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         var reportWriter = sp.GetRequiredService<SpotFuturesCrossMarketReportWriter>();
 
         var openPositions = await positionRepo.GetOpenPositionsByEnvironmentAsync(Env, ct);
-        CrossMarketDecision? lastDecision = null;
+        openPositions = await ReconcileExchangeStateAsync(settings, sp, openPositions, ct);
+        var lastDecision = _lastDecision;
 
         foreach (var symbol in settings.Symbols)
         {
@@ -128,7 +139,8 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
             var candleReady = await TryGetNewClosedCandleAsync(symbolSettings, sp, ct);
             if (candleReady)
             {
-                lastDecision = await EvaluateClosedCandleAsync(symbolSettings, sp, openPosition, ct) ?? lastDecision;
+                lastDecision = await EvaluateClosedCandleAsync(symbolSettings, microstructureSettings, sp, openPosition, ct) ?? lastDecision;
+                _lastDecision = lastDecision;
             }
         }
 
@@ -136,6 +148,139 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         var closed = await positionRepo.GetClosedPositionsByEnvironmentAsync(Env, ct);
         var openNow = await positionRepo.GetOpenPositionsByEnvironmentAsync(Env, ct);
         await reportWriter.WriteAsync(settings.ReportOutputDirectory, closed, openNow, lastDecision, ct);
+    }
+
+    /// <summary>
+    /// Keeps the local position book aligned with the exchange. This closes stale local rows,
+    /// recovers an exchange position after a crash between order fill and DB persistence, and
+    /// refreshes quantity/entry after a manual partial close. Configured symbols are exclusive
+    /// to this worker, so adopting an exchange-side position is safer than opening over it.
+    /// </summary>
+    private async Task<IReadOnlyList<Position>> ReconcileExchangeStateAsync(
+        SpotFuturesCrossMarketSettings settings,
+        IServiceProvider sp,
+        IReadOnlyList<Position> current,
+        CancellationToken ct)
+    {
+        if ((DateTime.UtcNow - _lastExchangeReconciliationUtc).TotalSeconds < 60)
+            return current;
+
+        _lastExchangeReconciliationUtc = DateTime.UtcNow;
+        var positions = current.ToList();
+        var client = sp.GetRequiredService<IFuturesTestnetClient>();
+        var accounting = sp.GetRequiredService<SpotFuturesCrossMarketAccounting>();
+        var repository = sp.GetRequiredService<IPositionRepository>();
+
+        foreach (var symbol in settings.Symbols)
+        {
+            try
+            {
+                var exchange = await client.GetPositionRiskAsync(symbol.ToString(), ct);
+                if (exchange is null)
+                    continue;
+
+                var local = positions.FirstOrDefault(p => p.Symbol == symbol && p.IsOpen);
+                var exchangeQuantity = Math.Abs(exchange.PositionAmt);
+                var exchangeSide = exchange.PositionAmt >= 0m ? OrderSide.BUY : OrderSide.SELL;
+                var referencePrice = exchange.MarkPrice > 0m
+                    ? exchange.MarkPrice
+                    : exchange.EntryPrice;
+
+                if (local is not null && exchangeQuantity <= 0m)
+                {
+                    var exitPrice = referencePrice > 0m
+                        ? referencePrice
+                        : await client.GetMarkPriceAsync(symbol.ToString(), ct);
+                    await accounting.CloseAsync(local, exitPrice, 0m, PositionExitReason.Reconciliation, DateTime.UtcNow, ct);
+                    positions.Remove(local);
+                    logger.LogWarning(
+                        "SpotFutures reconciliation closed stale local position. PositionId={PositionId} Symbol={Symbol} ExitPrice={ExitPrice}",
+                        local.Id, symbol, exitPrice);
+                    continue;
+                }
+
+                if (local is null && exchangeQuantity > 0m)
+                {
+                    var entryPrice = exchange.EntryPrice > 0m ? exchange.EntryPrice : referencePrice;
+                    var riskFraction = Math.Max(settings.MinStopPercent, 0.60m) / 100m;
+                    var stop = exchangeSide == OrderSide.BUY
+                        ? entryPrice * (1m - riskFraction)
+                        : entryPrice * (1m + riskFraction);
+                    var target = exchangeSide == OrderSide.BUY
+                        ? entryPrice * (1m + riskFraction * settings.MinRewardRiskRatio)
+                        : entryPrice * (1m - riskFraction * settings.MinRewardRiskRatio);
+                    var recovered = await accounting.OpenAsync(
+                        symbol, exchangeSide, exchangeQuantity, entryPrice, 0m,
+                        stop, target, DateTime.UtcNow, ct);
+                    positions.Add(recovered);
+                    logger.LogWarning(
+                        "SpotFutures reconciliation recovered exchange position. PositionId={PositionId} Symbol={Symbol} Side={Side} Quantity={Quantity} EntryPrice={EntryPrice}",
+                        recovered.Id, symbol, exchangeSide, exchangeQuantity, entryPrice);
+                    continue;
+                }
+
+                if (local is null || exchangeQuantity <= 0m)
+                    continue;
+
+                if (local.Side != exchangeSide)
+                {
+                    await accounting.CloseAsync(local, referencePrice, 0m, PositionExitReason.Reconciliation, DateTime.UtcNow, ct);
+                    positions.Remove(local);
+                    var riskFraction = Math.Max(settings.MinStopPercent, 0.60m) / 100m;
+                    var recoveredEntry = exchange.EntryPrice > 0m ? exchange.EntryPrice : referencePrice;
+                    var recoveredStop = exchangeSide == OrderSide.BUY
+                        ? recoveredEntry * (1m - riskFraction)
+                        : recoveredEntry * (1m + riskFraction);
+                    var recoveredTarget = exchangeSide == OrderSide.BUY
+                        ? recoveredEntry * (1m + riskFraction * settings.MinRewardRiskRatio)
+                        : recoveredEntry * (1m - riskFraction * settings.MinRewardRiskRatio);
+                    var recovered = await accounting.OpenAsync(
+                        symbol, exchangeSide, exchangeQuantity, recoveredEntry, 0m,
+                        recoveredStop, recoveredTarget, DateTime.UtcNow, ct);
+                    positions.Add(recovered);
+                    logger.LogWarning(
+                        "SpotFutures reconciliation repaired a side mismatch. OldPositionId={OldPositionId} NewPositionId={NewPositionId} Symbol={Symbol} ExchangeSide={Side}",
+                        local.Id, recovered.Id, symbol, exchangeSide);
+                    continue;
+                }
+
+                var quantityTolerance = Math.Max(0.00000001m, exchangeQuantity * 0.0001m);
+                if (Math.Abs(local.Quantity - exchangeQuantity) > quantityTolerance ||
+                    (exchange.EntryPrice > 0m && Math.Abs(local.AveragePrice - exchange.EntryPrice) > 0.00000001m))
+                {
+                    var oldEntry = local.AveragePrice;
+                    var stopFraction = local.StopLossPrice.HasValue && oldEntry > 0m
+                        ? Math.Abs(local.StopLossPrice.Value - oldEntry) / oldEntry
+                        : settings.MinStopPercent / 100m;
+                    var targetFraction = local.TakeProfitPrice.HasValue && oldEntry > 0m
+                        ? Math.Abs(local.TakeProfitPrice.Value - oldEntry) / oldEntry
+                        : stopFraction * settings.MinRewardRiskRatio;
+                    local.Quantity = exchangeQuantity;
+                    local.AveragePrice = exchange.EntryPrice > 0m ? exchange.EntryPrice : local.AveragePrice;
+                    local.StopLossPrice = local.Side == OrderSide.BUY
+                        ? local.AveragePrice * (1m - stopFraction)
+                        : local.AveragePrice * (1m + stopFraction);
+                    local.TakeProfitPrice = local.Side == OrderSide.BUY
+                        ? local.AveragePrice * (1m + targetFraction)
+                        : local.AveragePrice * (1m - targetFraction);
+                    local.UpdatedAt = DateTime.UtcNow;
+                    await repository.UpsertAsync(local, ct);
+                    logger.LogWarning(
+                        "SpotFutures reconciliation refreshed local position from exchange. PositionId={PositionId} Symbol={Symbol} Quantity={Quantity} EntryPrice={EntryPrice}",
+                        local.Id, symbol, local.Quantity, local.AveragePrice);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "SpotFutures exchange reconciliation failed for {Symbol}; trading cycle continues with the local book.", symbol);
+            }
+        }
+
+        return positions;
     }
 
     // --------------------------------------------------------------------- closed candle gate
@@ -192,6 +337,7 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
 
     private async Task<CrossMarketDecision?> EvaluateClosedCandleAsync(
         SpotFuturesCrossMarketSettings settings,
+        AdaptiveRollingProfitExitV1Settings microstructureSettings,
         IServiceProvider sp,
         Position? openPosition,
         CancellationToken ct)
@@ -200,6 +346,11 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         var signalEngine = sp.GetRequiredService<SpotFuturesCrossMarketSignalEngine>();
 
         var snapshot = await dataService.GetSnapshotAsync(settings, ct);
+        snapshot.Microstructure = marketDataService.GetSnapshot(
+            settings.Symbol,
+            OrderSide.BUY,
+            closeQuantity: 0m,
+            microstructureSettings);
 
         // Only accept a snapshot for a candle we have not evaluated yet; a stale anchor means
         // one feed has not published the new candle, so wait for the next cycle.
@@ -367,12 +518,46 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
             var orderRepo = sp.GetRequiredService<IOrderRepository>();
             var decisionRepo = sp.GetRequiredService<ITradeExecutionDesicionsRepository>();
 
-            await futuresClient.EnsureLeverageAsync(settings.Symbol.ToString(), settings.Leverage, ct);
-            var result = await futuresClient.PlaceMarketOrderAsync(settings.Symbol.ToString(), side, quantity, reduceOnly: false, ct);
+            try
+            {
+                await futuresClient.EnsureLeverageAsync(settings.Symbol.ToString(), settings.Leverage, ct);
+            }
+            catch (InvalidOperationException ex) when (
+                settings.EnableTestnetEvidenceEntries && IsTransientLeveragePreparationFailure(ex))
+            {
+                // A leverage update is an idempotent account setting, not an order. During a
+                // short fake-funds evidence run, a persistent Binance backend timeout should
+                // not prevent the market-order path from being exercised. Position notional
+                // is already capped independently by ResolveQuantityAsync.
+                logger.LogWarning(
+                    ex,
+                    "SpotFuturesCrossMarket evidence entry proceeding with the exchange's current leverage after transient leverage-update timeouts. Symbol={Symbol} RequestedLeverage={Leverage}",
+                    settings.Symbol, settings.Leverage);
+            }
+
+            var result = await futuresClient.PlaceMarketOrderAsync(
+                settings.Symbol.ToString(),
+                side,
+                quantity,
+                reduceOnly: false,
+                ct,
+                clientOrderId: correlationId);
 
             var (fills, avgPrice, filledQty, entryFee) = await ResolveFillAsync(futuresClient, settings.Symbol.ToString(), result, ct);
             var entryPrice = avgPrice > 0m ? avgPrice : markPrice;
             var executedQty = filledQty > 0m ? filledQty : quantity;
+            var riskPercent = decision.StopLossPrice.HasValue && markPrice > 0m
+                ? Math.Abs(markPrice - decision.StopLossPrice.Value) / markPrice
+                : settings.MinStopPercent / 100m;
+            var targetPercent = decision.TakeProfitPrice.HasValue && markPrice > 0m
+                ? Math.Abs(decision.TakeProfitPrice.Value - markPrice) / markPrice
+                : riskPercent * settings.MinRewardRiskRatio;
+            var actualStopLoss = side == OrderSide.BUY
+                ? entryPrice * (1m - riskPercent)
+                : entryPrice * (1m + riskPercent);
+            var actualTakeProfit = side == OrderSide.BUY
+                ? entryPrice * (1m + targetPercent)
+                : entryPrice * (1m - targetPercent);
 
             var order = new Order
             {
@@ -393,7 +578,7 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
 
             var position = await accounting.OpenAsync(
                 settings.Symbol, side, executedQty, entryPrice, entryFee,
-                decision.StopLossPrice, decision.TakeProfitPrice, DateTime.UtcNow, ct);
+                actualStopLoss, actualTakeProfit, DateTime.UtcNow, ct);
 
             order.ParentPositionId = position.Id;
             await orderRepo.UpdateAsync(order, ct);
@@ -407,8 +592,8 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
                 ExecutionSuccess = true,
                 LocalOrderId = order.Id,
                 ExchangeOrderId = order.ExchangeOrderId,
-                StopLossPrice = decision.StopLossPrice,
-                TakeProfitPrice = decision.TakeProfitPrice
+                StopLossPrice = actualStopLoss,
+                TakeProfitPrice = actualTakeProfit
             });
 
             logger.LogInformation(
@@ -634,7 +819,8 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         try
         {
             var balance = await futuresClient.GetBalanceAsync("USDT", ct);
-            var marginPerSymbol = balance.WalletBalance * (settings.BalanceAllocationPercent / 100m) / Math.Max(1, settings.Symbols.Count);
+            var targetMargin = balance.WalletBalance * (settings.BalanceAllocationPercent / 100m) / Math.Max(1, settings.Symbols.Count);
+            var marginPerSymbol = Math.Min(targetMargin, Math.Max(0m, balance.AvailableBalance) * 0.90m);
             var notional = marginPerSymbol * settings.Leverage;
 
             logger.LogInformation(
@@ -896,7 +1082,11 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
     private static int TrailingConsecutiveLosses(IReadOnlyList<Position> closed)
     {
         var count = 0;
-        foreach (var p in closed.OrderByDescending(p => p.ClosedAt ?? p.UpdatedAt).ThenByDescending(p => p.Id))
+        var today = DateTime.UtcNow.Date;
+        foreach (var p in closed
+                     .Where(p => (p.ClosedAt ?? p.UpdatedAt).Date == today)
+                     .OrderByDescending(p => p.ClosedAt ?? p.UpdatedAt)
+                     .ThenByDescending(p => p.Id))
         {
             if (p.RealizedPnl < 0m)
                 count++;
@@ -906,6 +1096,13 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
 
         return count;
     }
+
+    private static bool IsTransientLeveragePreparationFailure(InvalidOperationException ex)
+        => ex.Message.Contains("/fapi/v1/leverage", StringComparison.OrdinalIgnoreCase) &&
+           (ex.Message.Contains("Status=408", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("Status=503", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("code\":-1007", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("Service Unavailable", StringComparison.OrdinalIgnoreCase));
 
     private static int CountTradesToday(IReadOnlyList<Position> closed)
     {

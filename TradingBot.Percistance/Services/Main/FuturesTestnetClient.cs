@@ -19,7 +19,11 @@ namespace TradingBot.Percistance.Services.Main;
 public sealed class FuturesTestnetClient : IFuturesTestnetClient
 {
     private static readonly string[] ForbiddenMainnetHosts = { "fapi.binance.com", "api.binance.com", "dapi.binance.com" };
-    private static readonly string[] AllowedTestnetHosts = { "testnet.binancefuture.com" };
+    private static readonly string[] AllowedTestnetHosts =
+    {
+        "demo-fapi.binance.com",
+        "testnet.binancefuture.com"
+    };
 
     private readonly HttpClient _httpClient;
     private readonly ILogger<FuturesTestnetClient> _logger;
@@ -48,15 +52,40 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
 
     public async Task EnsureLeverageAsync(string symbol, int leverage, CancellationToken cancellationToken = default)
     {
-        var query = new Dictionary<string, string>(StringComparer.Ordinal)
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            ["symbol"] = symbol,
-            ["leverage"] = leverage.ToString(CultureInfo.InvariantCulture)
-        };
+            var query = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["symbol"] = symbol,
+                ["leverage"] = leverage.ToString(CultureInfo.InvariantCulture)
+            };
 
-        await SendSignedAsync(HttpMethod.Post, "/fapi/v1/leverage", query, cancellationToken);
-        _logger.LogInformation("FuturesTestnet leverage set. Symbol={Symbol} Leverage={Leverage}", symbol, leverage);
+            try
+            {
+                await SendSignedAsync(HttpMethod.Post, "/fapi/v1/leverage", query, cancellationToken);
+                _logger.LogInformation(
+                    "FuturesTestnet leverage set. Symbol={Symbol} Leverage={Leverage} Attempt={Attempt}",
+                    symbol, leverage, attempt);
+                return;
+            }
+            catch (InvalidOperationException ex) when (attempt < maxAttempts && IsTransientLeverageTimeout(ex))
+            {
+                var delay = TimeSpan.FromMilliseconds(250 * (1 << (attempt - 1)));
+                _logger.LogWarning(
+                    ex,
+                    "FuturesTestnet leverage update timed out; retrying the idempotent setting. Symbol={Symbol} Leverage={Leverage} Attempt={Attempt}/{MaxAttempts} DelayMs={DelayMs}",
+                    symbol, leverage, attempt, maxAttempts, delay.TotalMilliseconds);
+                await Task.Delay(delay, cancellationToken);
+            }
+        }
     }
+
+    private static bool IsTransientLeverageTimeout(InvalidOperationException ex)
+        => ex.Message.Contains("Status=408", StringComparison.OrdinalIgnoreCase) ||
+           ex.Message.Contains("Status=503", StringComparison.OrdinalIgnoreCase) ||
+           ex.Message.Contains("code\":-1007", StringComparison.OrdinalIgnoreCase) ||
+           ex.Message.Contains("Service Unavailable", StringComparison.OrdinalIgnoreCase);
 
     public async Task<decimal> GetMarkPriceAsync(string symbol, CancellationToken cancellationToken = default)
     {
@@ -77,37 +106,136 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
         decimal quantity,
         bool reduceOnly,
         CancellationToken cancellationToken = default,
-        string? positionSide = null)
+        string? positionSide = null,
+        string? clientOrderId = null)
     {
+        var stableClientOrderId = string.IsNullOrWhiteSpace(clientOrderId)
+            ? Guid.NewGuid().ToString("N")
+            : clientOrderId.Length <= 36
+                ? clientOrderId
+                : clientOrderId[..36];
         var query = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["symbol"] = symbol,
             ["side"] = side.ToString(),
             ["type"] = "MARKET",
             ["quantity"] = quantity.ToString(CultureInfo.InvariantCulture),
-            ["newOrderRespType"] = "RESULT"
+            // ACK is Binance's default and returns after order acceptance. RESULT waits for
+            // the final MARKET fill and can surface -1007 backend timeouts even when the
+            // order was accepted. Callers already resolve fills via userTrades/order query.
+            ["newOrderRespType"] = "ACK",
+            // A stable ID makes an ambiguous POST recoverable without risking a
+            // duplicate order when Binance's backend response times out.
+            ["newClientOrderId"] = stableClientOrderId
         };
         if (reduceOnly)
             query["reduceOnly"] = "true";
         if (!string.IsNullOrWhiteSpace(positionSide))
             query["positionSide"] = positionSide;
-
-        var body = await SendSignedAsync(HttpMethod.Post, "/fapi/v1/order", query, cancellationToken);
-        using var doc = JsonDocument.Parse(body);
-        var root = doc.RootElement;
-
-        return new FuturesTestnetOrderResult
+        const int maxSubmitAttempts = 3;
+        InvalidOperationException? lastAmbiguousFailure = null;
+        for (var attempt = 1; attempt <= maxSubmitAttempts; attempt++)
         {
-            OrderId = GetLong(root, "orderId"),
-            Symbol = GetString(root, "symbol") ?? symbol,
-            Side = GetString(root, "side") ?? side.ToString(),
-            Status = GetString(root, "status") ?? "NEW",
-            ExecutedQty = GetDecimal(root, "executedQty"),
-            AvgPrice = GetDecimal(root, "avgPrice"),
-            CumQuote = GetDecimal(root, "cumQuote"),
-            UpdateTimeMs = GetLong(root, "updateTime")
-        };
+            try
+            {
+                var body = await SendSignedAsync(HttpMethod.Post, "/fapi/v1/order", query, cancellationToken);
+                return ParseOrderResult(body, symbol, side.ToString());
+            }
+            catch (InvalidOperationException ex) when (IsAmbiguousOrderSubmissionFailure(ex))
+            {
+                lastAmbiguousFailure = ex;
+                _logger.LogWarning(
+                    ex,
+                    "FuturesTestnet market-order response was ambiguous; reconciling by client order ID before any retry. Symbol={Symbol} ClientOrderId={ClientOrderId} Attempt={Attempt}/{MaxAttempts}",
+                    symbol, stableClientOrderId, attempt, maxSubmitAttempts);
+
+                var recovered = await TryGetOrderByClientOrderIdAsync(
+                    symbol,
+                    stableClientOrderId,
+                    side.ToString(),
+                    cancellationToken);
+                if (recovered is not null)
+                {
+                    _logger.LogInformation(
+                        "FuturesTestnet recovered an ambiguously submitted market order. Symbol={Symbol} ClientOrderId={ClientOrderId} OrderId={OrderId} Status={Status}",
+                        symbol, stableClientOrderId, recovered.OrderId, recovered.Status);
+                    return recovered;
+                }
+
+                if (attempt == maxSubmitAttempts)
+                    break;
+
+                // All reconciliation probes returned Binance -2013, so this exact
+                // client order ID is absent and can be submitted again safely.
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"FuturesTestnet market order was not accepted after {maxSubmitAttempts} reconciled attempts. Symbol={symbol} ClientOrderId={stableClientOrderId}",
+            lastAmbiguousFailure);
     }
+
+    private async Task<FuturesTestnetOrderResult?> TryGetOrderByClientOrderIdAsync(
+        string symbol,
+        string clientOrderId,
+        string fallbackSide,
+        CancellationToken cancellationToken)
+    {
+        const int maxQueryAttempts = 3;
+        for (var attempt = 1; attempt <= maxQueryAttempts; attempt++)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(150 * (1 << (attempt - 1))), cancellationToken);
+            try
+            {
+                var query = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["symbol"] = symbol,
+                    ["origClientOrderId"] = clientOrderId
+                };
+                var body = await SendSignedAsync(HttpMethod.Get, "/fapi/v1/order", query, cancellationToken);
+                return ParseOrderResult(body, symbol, fallbackSide);
+            }
+            catch (InvalidOperationException ex) when (IsOrderNotFound(ex))
+            {
+                if (attempt == maxQueryAttempts)
+                    return null;
+            }
+            catch (InvalidOperationException ex) when (IsTransientStatusQueryFailure(ex) && attempt < maxQueryAttempts)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "FuturesTestnet order-status reconciliation failed transiently; retrying without resubmitting. Symbol={Symbol} ClientOrderId={ClientOrderId} Attempt={Attempt}/{MaxAttempts}",
+                    symbol, clientOrderId, attempt, maxQueryAttempts);
+            }
+            catch (InvalidOperationException ex) when (IsTransientStatusQueryFailure(ex))
+            {
+                throw new InvalidOperationException(
+                    $"FuturesTestnet order submission status remains unknown; refusing to resubmit. Symbol={symbol} ClientOrderId={clientOrderId}",
+                    ex);
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsAmbiguousOrderSubmissionFailure(InvalidOperationException ex)
+        => ex.Message.Contains("Status=408", StringComparison.OrdinalIgnoreCase) ||
+           ex.Message.Contains("Status=500", StringComparison.OrdinalIgnoreCase) ||
+           ex.Message.Contains("Status=502", StringComparison.OrdinalIgnoreCase) ||
+           ex.Message.Contains("Status=503", StringComparison.OrdinalIgnoreCase) ||
+           ex.Message.Contains("Status=504", StringComparison.OrdinalIgnoreCase) ||
+           ex.Message.Contains("code\":-1007", StringComparison.OrdinalIgnoreCase) ||
+           ex.Message.Contains("Bad Gateway", StringComparison.OrdinalIgnoreCase) ||
+           ex.Message.Contains("Service Unavailable", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTransientStatusQueryFailure(InvalidOperationException ex)
+        => IsAmbiguousOrderSubmissionFailure(ex) ||
+           ex.Message.Contains("Status=429", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsOrderNotFound(InvalidOperationException ex)
+        => ex.Message.Contains("code\":-2013", StringComparison.OrdinalIgnoreCase) ||
+           ex.Message.Contains("Order does not exist", StringComparison.OrdinalIgnoreCase);
 
     public async Task<FuturesTestnetBalance> GetBalanceAsync(string asset, CancellationToken cancellationToken = default)
     {
@@ -245,14 +373,18 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
         };
 
         var body = await SendSignedAsync(HttpMethod.Get, "/fapi/v1/order", query, cancellationToken);
+        return ParseOrderResult(body, symbol, string.Empty);
+    }
+
+    private static FuturesTestnetOrderResult ParseOrderResult(string body, string fallbackSymbol, string fallbackSide)
+    {
         using var doc = JsonDocument.Parse(body);
         var root = doc.RootElement;
-
         return new FuturesTestnetOrderResult
         {
             OrderId = GetLong(root, "orderId"),
-            Symbol = GetString(root, "symbol") ?? symbol,
-            Side = GetString(root, "side") ?? string.Empty,
+            Symbol = GetString(root, "symbol") ?? fallbackSymbol,
+            Side = GetString(root, "side") ?? fallbackSide,
             Status = GetString(root, "status") ?? "NEW",
             ExecutedQty = GetDecimal(root, "executedQty"),
             AvgPrice = GetDecimal(root, "avgPrice"),
@@ -469,9 +601,9 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
     private void EnsureTestnetHost()
     {
         var host = _httpClient.BaseAddress?.Host ?? string.Empty;
-        if (ForbiddenMainnetHosts.Any(h => host.Contains(h, StringComparison.OrdinalIgnoreCase)))
+        if (ForbiddenMainnetHosts.Any(h => string.Equals(host, h, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException($"FuturesTestnetClient refuses to call mainnet host '{host}'.");
-        if (!AllowedTestnetHosts.Any(h => host.Contains(h, StringComparison.OrdinalIgnoreCase)))
+        if (!AllowedTestnetHosts.Any(h => string.Equals(host, h, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException($"FuturesTestnetClient base host '{host}' is not a recognized Binance Futures Testnet host.");
     }
 

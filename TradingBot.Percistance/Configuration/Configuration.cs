@@ -77,7 +77,7 @@ public static class Configuration
             var cfg = sp.GetRequiredService<IConfiguration>();
             var baseUrl = cfg.GetValue<string>("Eth15TestnetExecution:TestnetBaseUrl");
             if (string.IsNullOrWhiteSpace(baseUrl))
-                baseUrl = "https://testnet.binancefuture.com";
+                baseUrl = "https://demo-fapi.binance.com";
             client.BaseAddress = new Uri(baseUrl);
             client.Timeout = TimeSpan.FromSeconds(Math.Max(1, cfg.GetValue<int?>("Binance:Http:TimeoutSeconds") ?? 15));
         });

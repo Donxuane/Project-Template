@@ -15,8 +15,8 @@ namespace TradingBot.Application.SpotFuturesCrossMarket;
 public sealed record SpotFuturesCrossMarketSettings
 {
     public const string SectionName = "SpotFuturesCrossMarketTestnetV1";
-    public const string StrategyName = "SpotFuturesCrossMarketTestnetV1";
-    public const string ExecutionEnvironment = ExecutionEnvironments.SpotFuturesCrossMarketTestnetV1;
+    public const string StrategyName = "SpotFuturesCrossMarketAggressiveV3";
+    public const string ExecutionEnvironment = ExecutionEnvironments.SpotFuturesCrossMarketTestnetV3;
 
     public const string RealOrdersForbiddenError = "SpotFuturesCrossMarketRealOrdersForbidden";
     public const string SymbolCollisionError = "SpotFuturesCrossMarketSymbolCollidesWithEth15";
@@ -47,6 +47,9 @@ public sealed record SpotFuturesCrossMarketSettings
     /// <summary>Candle interval used on both markets (e.g. 15m).</summary>
     public string Interval { get; init; } = "15m";
 
+    /// <summary>Higher timeframe used to decide whether the market is trending or ranging.</summary>
+    public string RegimeInterval { get; init; } = "1h";
+
     /// <summary>Closed candles fetched per market per evaluation.</summary>
     public int CandleHistory { get; init; } = 80;
 
@@ -56,6 +59,31 @@ public sealed record SpotFuturesCrossMarketSettings
     public int MomentumLookbackCandles { get; init; } = 4;
     public int MinEntryTrendConfidenceScore { get; init; } = 45;
     public int MinExitTrendConfidenceScore { get; init; } = 35;
+    public int RegimeShortMaPeriod { get; init; } = 20;
+    public int RegimeLongMaPeriod { get; init; } = 50;
+    public decimal MinRegimeAdx { get; init; } = 18m;
+    public int RsiPeriod { get; init; } = 14;
+    public decimal LongRsiMin { get; init; } = 50m;
+    public decimal LongRsiMax { get; init; } = 70m;
+    public decimal ShortRsiMin { get; init; } = 30m;
+    public decimal ShortRsiMax { get; init; } = 50m;
+    public int EntryBreakoutLookbackCandles { get; init; } = 12;
+    public int EntryPullbackLookbackCandles { get; init; } = 6;
+    public decimal MinEntryVolumeRatio { get; init; } = 0.80m;
+    public decimal MinLongTakerBuyRatio { get; init; } = 0.51m;
+    public decimal MaxShortTakerBuyRatio { get; init; } = 0.49m;
+    public decimal MaxEntryExtensionAtr { get; init; } = 1.25m;
+    public decimal MinRewardRiskRatio { get; init; } = 2.20m;
+    public bool RequireMicrostructureConfirmation { get; init; } = true;
+    public decimal MaxEntrySpreadBps { get; init; } = 3m;
+    public decimal MinEntryMicrostructureScore { get; init; } = 3m;
+    /// <summary>
+    /// Testnet-only evidence mode. When the normal multi-timeframe setup rejects a synchronized
+    /// candle, the signal engine may place a clearly labelled directional probe so the order,
+    /// fill, position-management and reporting paths can be exercised during a short run.
+    /// This never bypasses runtime risk/execution guards and cannot reach a real-money client.
+    /// </summary>
+    public bool EnableTestnetEvidenceEntries { get; init; }
     public bool EnableEntryQualityFilters { get; init; } = false;
     public bool RequireEntryClosedCandleDirectionConfirmation { get; init; } = true;
     public decimal MinEntrySpotMomentumAbsPercent { get; init; } = 0m;
@@ -71,6 +99,13 @@ public sealed record SpotFuturesCrossMarketSettings
 
     /// <summary>Skip entries when |basis| exceeds this percent (dislocated/desynced markets).</summary>
     public decimal MaxAbsBasisPercentForEntry { get; init; } = 1.0m;
+
+    /// <summary>
+    /// Separate fake-funds evidence-probe tolerance for independently simulated Spot/Futures
+    /// testnet feeds. Normal qualified strategy entries always use
+    /// <see cref="MaxAbsBasisPercentForEntry"/>.
+    /// </summary>
+    public decimal TestnetEvidenceMaxAbsBasisPercent { get; init; } = 1.0m;
 
     // Risk model (ATR-anchored).
     public decimal AtrStopMultiplier { get; init; } = 1.6m;
@@ -131,6 +166,8 @@ public sealed record SpotFuturesCrossMarketSettings
 
         var interval = section.GetValue<string>("Interval") is { Length: > 0 } i ? i : "15m";
         ParseInterval(interval); // throws on unsupported interval
+        var regimeInterval = section.GetValue<string>("RegimeInterval") is { Length: > 0 } r ? r : "1h";
+        ParseInterval(regimeInterval);
 
         var reportDir = section.GetValue<string>("ReportOutputDirectory") is { Length: > 0 } dir
             ? dir
@@ -143,12 +180,32 @@ public sealed record SpotFuturesCrossMarketSettings
             Symbols = symbols,
             Symbol = symbols[0],
             Interval = interval,
+            RegimeInterval = regimeInterval,
             CandleHistory = Math.Clamp(section.GetValue("CandleHistory", 80), 40, 1000),
             ShortMaPeriod = Math.Max(2, section.GetValue("ShortMaPeriod", 7)),
             LongMaPeriod = Math.Max(5, section.GetValue("LongMaPeriod", 25)),
             MomentumLookbackCandles = Math.Max(1, section.GetValue("MomentumLookbackCandles", 4)),
             MinEntryTrendConfidenceScore = Math.Clamp(section.GetValue("MinEntryTrendConfidenceScore", 45), 0, 100),
             MinExitTrendConfidenceScore = Math.Clamp(section.GetValue("MinExitTrendConfidenceScore", 35), 0, 100),
+            RegimeShortMaPeriod = Math.Max(3, section.GetValue("RegimeShortMaPeriod", 20)),
+            RegimeLongMaPeriod = Math.Max(10, section.GetValue("RegimeLongMaPeriod", 50)),
+            MinRegimeAdx = Math.Clamp(section.GetValue("MinRegimeAdx", 18m), 0m, 100m),
+            RsiPeriod = Math.Max(2, section.GetValue("RsiPeriod", 14)),
+            LongRsiMin = Math.Clamp(section.GetValue("LongRsiMin", 50m), 0m, 100m),
+            LongRsiMax = Math.Clamp(section.GetValue("LongRsiMax", 70m), 0m, 100m),
+            ShortRsiMin = Math.Clamp(section.GetValue("ShortRsiMin", 30m), 0m, 100m),
+            ShortRsiMax = Math.Clamp(section.GetValue("ShortRsiMax", 50m), 0m, 100m),
+            EntryBreakoutLookbackCandles = Math.Max(3, section.GetValue("EntryBreakoutLookbackCandles", 12)),
+            EntryPullbackLookbackCandles = Math.Max(2, section.GetValue("EntryPullbackLookbackCandles", 6)),
+            MinEntryVolumeRatio = Math.Max(0m, section.GetValue("MinEntryVolumeRatio", 0.80m)),
+            MinLongTakerBuyRatio = Math.Clamp(section.GetValue("MinLongTakerBuyRatio", 0.51m), 0m, 1m),
+            MaxShortTakerBuyRatio = Math.Clamp(section.GetValue("MaxShortTakerBuyRatio", 0.49m), 0m, 1m),
+            MaxEntryExtensionAtr = Math.Max(0.1m, section.GetValue("MaxEntryExtensionAtr", 1.25m)),
+            MinRewardRiskRatio = Math.Max(1m, section.GetValue("MinRewardRiskRatio", 2.20m)),
+            RequireMicrostructureConfirmation = section.GetValue("RequireMicrostructureConfirmation", true),
+            MaxEntrySpreadBps = Math.Max(0m, section.GetValue("MaxEntrySpreadBps", 3m)),
+            MinEntryMicrostructureScore = Math.Clamp(section.GetValue("MinEntryMicrostructureScore", 3m), -100m, 100m),
+            EnableTestnetEvidenceEntries = section.GetValue("EnableTestnetEvidenceEntries", false),
             EnableEntryQualityFilters = section.GetValue("EnableEntryQualityFilters", false),
             RequireEntryClosedCandleDirectionConfirmation = section.GetValue("RequireEntryClosedCandleDirectionConfirmation", true),
             MinEntrySpotMomentumAbsPercent = Math.Max(0m, section.GetValue("MinEntrySpotMomentumAbsPercent", 0m)),
@@ -158,6 +215,7 @@ public sealed record SpotFuturesCrossMarketSettings
             MaxCandleMisalignmentSeconds = Math.Max(0, section.GetValue("MaxCandleMisalignmentSeconds", 5)),
             MaxAbsFundingRateForEntry = Math.Max(0m, section.GetValue("MaxAbsFundingRateForEntry", 0.0008m)),
             MaxAbsBasisPercentForEntry = Math.Max(0m, section.GetValue("MaxAbsBasisPercentForEntry", 1.0m)),
+            TestnetEvidenceMaxAbsBasisPercent = Math.Max(0m, section.GetValue("TestnetEvidenceMaxAbsBasisPercent", 1.0m)),
             AtrStopMultiplier = Math.Max(0.1m, section.GetValue("AtrStopMultiplier", 1.6m)),
             AtrTargetMultiplier = Math.Max(0.1m, section.GetValue("AtrTargetMultiplier", 2.4m)),
             MinStopPercent = Math.Max(0.05m, section.GetValue("MinStopPercent", 0.35m)),

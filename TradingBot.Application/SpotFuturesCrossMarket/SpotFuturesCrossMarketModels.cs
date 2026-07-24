@@ -42,6 +42,15 @@ public sealed class CrossMarketSnapshot
     /// <summary>Closed futures candles up to and including the aligned candle.</summary>
     public MarketSnapshot? Futures { get; init; }
 
+    /// <summary>Synchronized higher-timeframe spot context used as the directional regime.</summary>
+    public MarketSnapshot? RegimeSpot { get; init; }
+
+    /// <summary>Synchronized higher-timeframe futures confirmation of the directional regime.</summary>
+    public MarketSnapshot? RegimeFutures { get; init; }
+
+    /// <summary>Live futures order-book, aggressive-flow and velocity state at evaluation time.</summary>
+    public AdaptiveRollingMarketDataSnapshot? Microstructure { get; set; }
+
     public decimal SpotClose { get; init; }
     public decimal FuturesClose { get; init; }
 

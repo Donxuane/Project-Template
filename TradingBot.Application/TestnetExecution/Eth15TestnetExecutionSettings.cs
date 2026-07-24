@@ -23,7 +23,11 @@ public sealed class Eth15TestnetExecutionSettings
     public const string ProfileName = "Frozen_ETH_NearExtremeShort_15m_T1.25S0.75_PerfRecentNetPositiveChk24hAct12hLB14d_FixedFrequencyV1";
     public const TradingSymbol Symbol = TradingSymbol.ETHUSDT;
 
-    public static readonly IReadOnlyList<string> AllowedTestnetHosts = new[] { "testnet.binancefuture.com" };
+    public static readonly IReadOnlyList<string> AllowedTestnetHosts = new[]
+    {
+        "demo-fapi.binance.com",
+        "testnet.binancefuture.com"
+    };
     public static readonly IReadOnlyList<string> ForbiddenMainnetHosts = new[] { "fapi.binance.com", "api.binance.com", "binance.com/api", "dapi.binance.com" };
 
     public bool Enabled { get; init; }
@@ -34,7 +38,7 @@ public sealed class Eth15TestnetExecutionSettings
     /// <summary>Real orders are never permitted. Hardcoded false; cannot be overridden by config.</summary>
     public bool AllowRealOrders { get; } = false;
 
-    public string TestnetBaseUrl { get; init; } = "https://testnet.binancefuture.com";
+    public string TestnetBaseUrl { get; init; } = "https://demo-fapi.binance.com";
     public string? TestnetApiKey { get; init; }
     public string? TestnetSecretKey { get; init; }
 
@@ -69,7 +73,7 @@ public sealed class Eth15TestnetExecutionSettings
             AllowTestnetOrders = section.GetValue("AllowTestnetOrders", false),
             TestnetBaseUrl = section.GetValue<string>("TestnetBaseUrl") is { Length: > 0 } baseUrl
                 ? baseUrl
-                : "https://testnet.binancefuture.com",
+                : "https://demo-fapi.binance.com",
             TestnetApiKey = section["TestnetApiKey"],
             TestnetSecretKey = section["TestnetSecretKey"],
             NotionalUsdt = Math.Max(0m, section.GetValue("NotionalUsdt", 10m)),
@@ -95,15 +99,25 @@ public sealed class Eth15TestnetExecutionSettings
             throw new InvalidOperationException(RealOrdersForbiddenError);
 
         var baseUrl = TestnetBaseUrl ?? string.Empty;
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var parsedBaseUrl) ||
+            !string.Equals(parsedBaseUrl.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"{NonTestnetBaseUrlError}: TestnetBaseUrl '{baseUrl}' must be an absolute HTTPS URL.");
+        }
 
         foreach (var forbidden in ForbiddenMainnetHosts)
         {
-            if (baseUrl.Contains(forbidden, StringComparison.OrdinalIgnoreCase))
+            var isForbidden = forbidden.Contains('/')
+                ? baseUrl.Contains(forbidden, StringComparison.OrdinalIgnoreCase)
+                : string.Equals(parsedBaseUrl.Host, forbidden, StringComparison.OrdinalIgnoreCase);
+            if (isForbidden)
                 throw new InvalidOperationException(
                     $"{NonTestnetBaseUrlError}: TestnetBaseUrl '{baseUrl}' targets a mainnet host '{forbidden}'. Only Binance Futures Testnet is permitted.");
         }
 
-        var isAllowedTestnetHost = AllowedTestnetHosts.Any(h => baseUrl.Contains(h, StringComparison.OrdinalIgnoreCase));
+        var isAllowedTestnetHost = AllowedTestnetHosts.Any(h =>
+            string.Equals(parsedBaseUrl.Host, h, StringComparison.OrdinalIgnoreCase));
         if (!isAllowedTestnetHost)
             throw new InvalidOperationException(
                 $"{NonTestnetBaseUrlError}: TestnetBaseUrl '{baseUrl}' is not a recognized Binance Futures Testnet host ({string.Join(", ", AllowedTestnetHosts)}).");

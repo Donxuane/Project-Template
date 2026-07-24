@@ -112,6 +112,139 @@ public class BinanceHttpResilienceTests
     }
 
     [Fact]
+    public async Task FuturesLeverageBackendTimeout_RetriesIdempotentSetting()
+    {
+        var handler = new SequenceHandler(
+            _ => new HttpResponseMessage(HttpStatusCode.RequestTimeout)
+            {
+                Content = new StringContent("""{"code":-1007,"msg":"Timeout waiting for response from backend server."}""")
+            },
+            _ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"symbol":"BTCUSDT","leverage":3,"maxNotionalValue":"1000000"}""")
+            });
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Eth15TestnetExecution:TestnetApiKey"] = "test-api-key",
+                ["Eth15TestnetExecution:TestnetSecretKey"] = "test-secret-key"
+            })
+            .Build();
+        var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://demo-fapi.binance.com")
+        };
+        var client = new FuturesTestnetClient(
+            httpClient,
+            configuration,
+            new FakeTimeSyncService(),
+            NullLogger<FuturesTestnetClient>.Instance);
+
+        await client.EnsureLeverageAsync("BTCUSDT", 3);
+
+        Assert.Equal(2, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task FuturesMarketOrder_UsesImmediateAckAndClientOrderId()
+    {
+        string? requestBody = null;
+        var handler = new SequenceHandler(
+            request =>
+            {
+                requestBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"orderId":123,"symbol":"BTCUSDT","side":"SELL","status":"NEW","executedQty":"0","avgPrice":"0","cumQuote":"0","updateTime":1}""")
+                };
+            });
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Eth15TestnetExecution:TestnetApiKey"] = "test-api-key",
+                ["Eth15TestnetExecution:TestnetSecretKey"] = "test-secret-key"
+            })
+            .Build();
+        var client = new FuturesTestnetClient(
+            new HttpClient(handler) { BaseAddress = new Uri("https://demo-fapi.binance.com") },
+            configuration,
+            new FakeTimeSyncService(),
+            NullLogger<FuturesTestnetClient>.Instance);
+
+        var result = await client.PlaceMarketOrderAsync(
+            "BTCUSDT",
+            TradingBot.Domain.Enums.Binance.OrderSide.SELL,
+            0.001m,
+            reduceOnly: false,
+            clientOrderId: "evidence-order-1");
+
+        Assert.Equal(123, result.OrderId);
+        Assert.Contains("newOrderRespType=ACK", requestBody);
+        Assert.Contains("newClientOrderId=evidence-order-1", requestBody);
+        Assert.DoesNotContain("newOrderRespType=RESULT", requestBody);
+    }
+
+    [Fact]
+    public async Task FuturesMarketOrder_AmbiguousTimeout_ReconcilesAbsenceBeforeSafeRetry()
+    {
+        var requestBodies = new List<string>();
+        var handler = new SequenceHandler(
+            request =>
+            {
+                requestBodies.Add(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+                return new HttpResponseMessage(HttpStatusCode.RequestTimeout)
+                {
+                    Content = new StringContent("""{"code":-1007,"msg":"Timeout waiting for response from backend server. Send status unknown; execution status unknown."}""")
+                };
+            },
+            request => MissingOrder(request),
+            request => MissingOrder(request),
+            request => MissingOrder(request),
+            request =>
+            {
+                requestBodies.Add(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"orderId":456,"symbol":"BTCUSDT","side":"SELL","status":"NEW","executedQty":"0","avgPrice":"0","cumQuote":"0","updateTime":2}""")
+                };
+            });
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Eth15TestnetExecution:TestnetApiKey"] = "test-api-key",
+                ["Eth15TestnetExecution:TestnetSecretKey"] = "test-secret-key"
+            })
+            .Build();
+        var client = new FuturesTestnetClient(
+            new HttpClient(handler) { BaseAddress = new Uri("https://demo-fapi.binance.com") },
+            configuration,
+            new FakeTimeSyncService(),
+            NullLogger<FuturesTestnetClient>.Instance);
+
+        var result = await client.PlaceMarketOrderAsync(
+            "BTCUSDT",
+            TradingBot.Domain.Enums.Binance.OrderSide.SELL,
+            0.001m,
+            reduceOnly: false,
+            clientOrderId: "stable-evidence-order");
+
+        Assert.Equal(456L, result.OrderId);
+        Assert.Equal(5, handler.CallCount);
+        Assert.Equal(2, requestBodies.Count);
+        Assert.All(requestBodies, body => Assert.Contains("newClientOrderId=stable-evidence-order", body));
+    }
+
+    private static HttpResponseMessage MissingOrder(HttpRequestMessage request)
+    {
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Contains("origClientOrderId=stable-evidence-order", request.RequestUri!.Query);
+        return new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("""{"code":-2013,"msg":"Order does not exist."}""")
+        };
+    }
+
+    [Fact]
     public async Task RateLimiter_Throttles_WhenBudgetExceeded()
     {
         var config = new ConfigurationBuilder()

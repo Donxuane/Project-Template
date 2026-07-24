@@ -29,18 +29,28 @@ public sealed class SpotFuturesCrossMarketDataService(
 
         var spotTask = FetchSpotClosedCandlesAsync(symbol, settings.Interval, settings.CandleHistory, cancellationToken);
         var futuresTask = FetchFuturesClosedCandlesAsync(symbol, settings.Interval, settings.CandleHistory, cancellationToken);
-        await Task.WhenAll(spotTask, futuresTask);
+        var regimeSpotTask = string.Equals(settings.RegimeInterval, settings.Interval, StringComparison.OrdinalIgnoreCase)
+            ? spotTask
+            : FetchSpotClosedCandlesAsync(symbol, settings.RegimeInterval, settings.CandleHistory, cancellationToken);
+        var regimeFuturesTask = string.Equals(settings.RegimeInterval, settings.Interval, StringComparison.OrdinalIgnoreCase)
+            ? futuresTask
+            : FetchFuturesClosedCandlesAsync(symbol, settings.RegimeInterval, settings.CandleHistory, cancellationToken);
+        await Task.WhenAll(spotTask, futuresTask, regimeSpotTask, regimeFuturesTask);
 
         var spotCandles = spotTask.Result;
         var futuresCandles = futuresTask.Result;
+        var regimeSpotCandles = regimeSpotTask.Result;
+        var regimeFuturesCandles = regimeFuturesTask.Result;
 
-        if (spotCandles.Count == 0 || futuresCandles.Count == 0)
+        if (spotCandles.Count == 0 || futuresCandles.Count == 0 ||
+            regimeSpotCandles.Count == 0 || regimeFuturesCandles.Count == 0)
         {
             return OutOfSync(settings, spotCandles, futuresCandles,
-                $"MissingCandles(spot={spotCandles.Count}, futures={futuresCandles.Count})");
+                $"MissingCandles(spot={spotCandles.Count}, futures={futuresCandles.Count}, regimeSpot={regimeSpotCandles.Count}, regimeFutures={regimeFuturesCandles.Count})");
         }
 
         var required = Math.Max(settings.LongMaPeriod + 2, settings.MomentumLookbackCandles + 2);
+        var regimeRequired = Math.Max(settings.RegimeLongMaPeriod + 2, settings.RsiPeriod * 2 + 2);
         if (spotCandles.Count < required || futuresCandles.Count < required)
         {
             return OutOfSync(settings, spotCandles, futuresCandles,
@@ -55,10 +65,17 @@ public sealed class SpotFuturesCrossMarketDataService(
         spotCandles = TrimToAnchor(spotCandles, alignedOpen);
         futuresCandles = TrimToAnchor(futuresCandles, alignedOpen);
 
-        if (spotCandles.Count < required || futuresCandles.Count < required)
+        var regimeAlignedOpen = regimeSpotCandles[^1].OpenTimeUtc <= regimeFuturesCandles[^1].OpenTimeUtc
+            ? regimeSpotCandles[^1].OpenTimeUtc
+            : regimeFuturesCandles[^1].OpenTimeUtc;
+        regimeSpotCandles = TrimToAnchor(regimeSpotCandles, regimeAlignedOpen);
+        regimeFuturesCandles = TrimToAnchor(regimeFuturesCandles, regimeAlignedOpen);
+
+        if (spotCandles.Count < required || futuresCandles.Count < required ||
+            regimeSpotCandles.Count < regimeRequired || regimeFuturesCandles.Count < regimeRequired)
         {
             return OutOfSync(settings, spotCandles, futuresCandles,
-                $"InsufficientAlignedHistory(spot={spotCandles.Count}, futures={futuresCandles.Count}, required={required})");
+                $"InsufficientAlignedHistory(spot={spotCandles.Count}, futures={futuresCandles.Count}, required={required}, regimeSpot={regimeSpotCandles.Count}, regimeFutures={regimeFuturesCandles.Count}, regimeRequired={regimeRequired})");
         }
 
         var spotAnchor = spotCandles[^1];
@@ -97,6 +114,8 @@ public sealed class SpotFuturesCrossMarketDataService(
             MarketsInSync = true,
             Spot = ToMarketSnapshot(symbol, spotCandles),
             Futures = ToMarketSnapshot(symbol, futuresCandles),
+            RegimeSpot = ToMarketSnapshot(symbol, regimeSpotCandles),
+            RegimeFutures = ToMarketSnapshot(symbol, regimeFuturesCandles),
             SpotClose = spotAnchor.Close,
             FuturesClose = futuresAnchor.Close,
             BasisPercent = basisPercent,
@@ -142,10 +161,14 @@ public sealed class SpotFuturesCrossMarketDataService(
             LatestClosedCandleCloseTimeUtc = last.CloseTimeUtc,
             LatestClosedCandleClosePrice = last.Close,
             LatestClosedCandleAgeSeconds = Math.Max(0m, (decimal)(DateTime.UtcNow - last.CloseTimeUtc).TotalSeconds),
+            OpenPrices = candles.Select(c => c.Open).ToArray(),
             HighPrices = candles.Select(c => c.High).ToArray(),
             LowPrices = candles.Select(c => c.Low).ToArray(),
             ClosePrices = candles.Select(c => c.Close).ToArray(),
             Volumes = candles.Select(c => c.Volume).ToArray(),
+            QuoteVolumes = candles.Select(c => c.QuoteVolume).ToArray(),
+            TradeCounts = candles.Select(c => c.TradeCount).ToArray(),
+            TakerBuyBaseVolumes = candles.Select(c => c.TakerBuyBaseVolume).ToArray(),
             TimestampUtc = DateTime.UtcNow
         };
     }
@@ -189,7 +212,17 @@ public sealed class SpotFuturesCrossMarketDataService(
         try
         {
             var klines = await futuresClient.GetKlinesAsync(symbol.ToString(), interval, Math.Clamp(limit + 1, 2, 1500), cancellationToken);
-            return KeepClosed(klines.Select(k => new ClosedCandle(k.OpenTimeUtc, k.CloseTimeUtc, k.High, k.Low, k.Close, k.Volume)).ToList());
+            return KeepClosed(klines.Select(k => new ClosedCandle(
+                k.OpenTimeUtc,
+                k.CloseTimeUtc,
+                k.Open,
+                k.High,
+                k.Low,
+                k.Close,
+                k.Volume,
+                k.QuoteVolume,
+                k.TradeCount,
+                k.TakerBuyBaseVolume)).ToList());
         }
         catch (OperationCanceledException)
         {
@@ -222,13 +255,17 @@ public sealed class SpotFuturesCrossMarketDataService(
 
             if (!TryUnixMs(item[0], out var openMs) || !TryUnixMs(item[6], out var closeMs))
                 continue;
-            if (!TryDec(item[2], out var high) || !TryDec(item[3], out var low) || !TryDec(item[4], out var close) || !TryDec(item[5], out var volume))
+            if (!TryDec(item[1], out var open) || !TryDec(item[2], out var high) || !TryDec(item[3], out var low) || !TryDec(item[4], out var close) || !TryDec(item[5], out var volume))
                 continue;
+
+            var quoteVolume = item.GetArrayLength() > 7 && TryDec(item[7], out var parsedQuoteVolume) ? parsedQuoteVolume : 0m;
+            var tradeCount = item.GetArrayLength() > 8 && TryUnixMs(item[8], out var parsedTradeCount) ? parsedTradeCount : 0L;
+            var takerBuyBaseVolume = item.GetArrayLength() > 9 && TryDec(item[9], out var parsedTakerBuy) ? parsedTakerBuy : 0m;
 
             candles.Add(new ClosedCandle(
                 DateTimeOffset.FromUnixTimeMilliseconds(openMs).UtcDateTime,
                 DateTimeOffset.FromUnixTimeMilliseconds(closeMs).UtcDateTime,
-                high, low, close, volume));
+                open, high, low, close, volume, quoteVolume, tradeCount, takerBuyBaseVolume));
         }
 
         return candles;
@@ -261,8 +298,12 @@ public sealed class SpotFuturesCrossMarketDataService(
     private sealed record ClosedCandle(
         DateTime OpenTimeUtc,
         DateTime CloseTimeUtc,
+        decimal Open,
         decimal High,
         decimal Low,
         decimal Close,
-        decimal Volume);
+        decimal Volume,
+        decimal QuoteVolume,
+        long TradeCount,
+        decimal TakerBuyBaseVolume);
 }

@@ -11,202 +11,243 @@ namespace TradingBot.Application.Tests;
 public class SpotFuturesCrossMarketSignalEngineTests
 {
     [Fact]
-    public void EntryQualityDisabled_PreservesPreviousLongEntryBehavior()
+    public void NormalMode_MisalignedSpotAndFuturesRegimes_ReturnsNoTrade()
     {
-        var engine = CreateEngine(BullishTrend(), BullishTrend());
+        var engine = CreateEngine();
+        var snapshot = Snapshot(
+            spotCloses: Series(60, 94m, 0.10m),
+            futuresCloses: Series(60, 106m, -0.10m));
+
+        var decision = engine.Evaluate(BaseSettings(), snapshot, openPositionSide: null);
+
+        Assert.Equal(CrossMarketAction.NoTrade, decision.Action);
+        Assert.Contains("NoQualifiedTrendEntry", decision.Reason);
+    }
+
+    [Fact]
+    public void EvidenceMode_NormalSetupRejected_ProducesLabelledTestnetEntry()
+    {
+        var engine = CreateEngine();
+        var settings = BaseSettings() with { EnableTestnetEvidenceEntries = true };
+        var snapshot = Snapshot(
+            spotCloses: Series(60, 94m, 0.10m),
+            futuresCloses: Series(60, 106m, -0.10m));
+
+        var decision = engine.Evaluate(settings, snapshot, openPositionSide: null);
+
+        Assert.Contains(decision.Action, new[] { CrossMarketAction.OpenLong, CrossMarketAction.OpenShort });
+        Assert.Contains("TESTNET_EVIDENCE_FALLBACK", decision.Reason);
+        Assert.NotNull(decision.StopLossPrice);
+        Assert.NotNull(decision.TakeProfitPrice);
+    }
+
+    [Fact]
+    public void EvidenceMode_QualifiedStrategySetup_IsNotRelabelledAsFallback()
+    {
+        var engine = CreateEngine();
         var settings = BaseSettings() with
         {
-            EnableEntryQualityFilters = false
+            EnableTestnetEvidenceEntries = true,
+            LongRsiMax = 100m
         };
-        var snapshot = Snapshot(
-            spotCloses: [100m, 101m, 102m, 103m, 102.90m],
-            futuresCloses: [100m, 101m, 102m, 103m, 102.90m]);
+        var closes = Series(60, 88m, 0.20m);
 
-        var decision = engine.Evaluate(settings, snapshot, openPositionSide: null);
+        var decision = engine.Evaluate(settings, Snapshot(closes, closes), openPositionSide: null);
 
         Assert.Equal(CrossMarketAction.OpenLong, decision.Action);
-        Assert.DoesNotContain("EntryQuality", decision.Reason);
+        Assert.DoesNotContain("TESTNET_EVIDENCE_FALLBACK", decision.Reason);
+        Assert.Contains("regime confirmed", decision.Reason);
     }
 
     [Fact]
-    public void EntryQualityEnabled_RejectsLongWhenLatestClosedCandlesDoNotConfirmDirection()
+    public void EvidenceMode_OutOfSyncData_RemainsBlocked()
     {
-        var engine = CreateEngine(BullishTrend(), BullishTrend());
-        var settings = QualitySettings();
-        var snapshot = Snapshot(
-            spotCloses: [100m, 101m, 102m, 103m, 102.90m],
-            futuresCloses: [100m, 101m, 102m, 103m, 102.90m]);
+        var engine = CreateEngine();
+        var settings = BaseSettings() with { EnableTestnetEvidenceEntries = true };
+        var snapshot = new CrossMarketSnapshot
+        {
+            Symbol = TradingSymbol.BTCUSDT,
+            MarketsInSync = false,
+            SyncIssue = "test"
+        };
 
         var decision = engine.Evaluate(settings, snapshot, openPositionSide: null);
 
         Assert.Equal(CrossMarketAction.NoTrade, decision.Action);
-        Assert.Contains("EntryDirectionNotConfirmed", decision.Reason);
+        Assert.Contains("MarketsOutOfSync", decision.Reason);
     }
 
     [Fact]
-    public void EntryQualityEnabled_RejectsShortWhenSpotMomentumIsTooWeak()
+    public void EvidenceMode_DislocatedBasis_RemainsBlocked()
     {
-        var engine = CreateEngine(BearishTrend(), BearishTrend());
-        var settings = QualitySettings();
+        var engine = CreateEngine();
+        var settings = BaseSettings() with { EnableTestnetEvidenceEntries = true };
         var snapshot = Snapshot(
-            spotCloses: [100m, 100.05m, 100.02m, 99.98m, 99.95m],
-            futuresCloses: [100m, 100.05m, 100.02m, 99.98m, 99.95m]);
+            spotCloses: Series(60, 94m, 0.10m),
+            futuresCloses: Series(60, 106m, -0.10m),
+            basisPercent: 1.01m);
 
         var decision = engine.Evaluate(settings, snapshot, openPositionSide: null);
 
         Assert.Equal(CrossMarketAction.NoTrade, decision.Action);
-        Assert.Contains("EntryMomentumTooWeak", decision.Reason);
+        Assert.Contains("BasisDislocation", decision.Reason);
     }
 
     [Fact]
-    public void EntryQualityEnabled_RejectsShortAfterOversizedClosedCandleIntoRecentLow()
+    public void EvidenceMode_UsesSeparateBasisToleranceOnlyForFallbackProbe()
     {
-        var engine = CreateEngine(BearishTrend(), BearishTrend());
-        var settings = QualitySettings();
+        var engine = CreateEngine();
+        var settings = BaseSettings() with
+        {
+            EnableTestnetEvidenceEntries = true,
+            TestnetEvidenceMaxAbsBasisPercent = 5m
+        };
         var snapshot = Snapshot(
-            spotCloses: [102m, 101.80m, 101.50m, 101.20m, 100.60m],
-            futuresCloses: [102m, 101.80m, 101.50m, 101.20m, 100.50m, 99.70m],
-            futuresLows: [101.80m, 101.50m, 101.10m, 100.40m, 100.20m, 99.60m],
-            futuresHighs: [102.20m, 102.00m, 101.80m, 101.40m, 100.80m, 99.90m]);
+            spotCloses: Series(60, 94m, 0.10m),
+            futuresCloses: Series(60, 106m, -0.10m),
+            basisPercent: 1.40m);
 
         var decision = engine.Evaluate(settings, snapshot, openPositionSide: null);
 
-        Assert.Equal(CrossMarketAction.NoTrade, decision.Action);
-        Assert.Contains("EntryExhaustedNearRecentLow", decision.Reason);
+        Assert.Contains(decision.Action, new[] { CrossMarketAction.OpenLong, CrossMarketAction.OpenShort });
+        Assert.Contains("TESTNET_EVIDENCE_FALLBACK", decision.Reason);
     }
 
     [Fact]
-    public void EntryQualityEnabled_AllowsShortWithDirectionalConfirmationAndRoomToContinue()
+    public void EvidenceMode_QualifiedStrategyEntry_KeepsNormalBasisLimit()
     {
-        var engine = CreateEngine(BearishTrend(), BearishTrend());
-        var settings = QualitySettings();
-        var snapshot = Snapshot(
-            spotCloses: [101m, 100.80m, 100.60m, 100.40m, 100.10m],
-            futuresCloses: [101m, 100.80m, 100.60m, 100.40m, 100.10m]);
+        var engine = CreateEngine();
+        var settings = BaseSettings() with
+        {
+            EnableTestnetEvidenceEntries = true,
+            TestnetEvidenceMaxAbsBasisPercent = 5m,
+            LongRsiMax = 100m
+        };
+        var closes = Series(60, 88m, 0.20m);
+
+        var decision = engine.Evaluate(
+            settings,
+            Snapshot(closes, closes, basisPercent: 1.40m),
+            openPositionSide: null);
+
+        Assert.Equal(CrossMarketAction.NoTrade, decision.Action);
+        Assert.Contains("mode=strategy", decision.Reason);
+    }
+
+    [Fact]
+    public void EvidenceMode_ExtremePositiveFunding_SelectsShortProbe()
+    {
+        var engine = CreateEngine();
+        var settings = BaseSettings() with { EnableTestnetEvidenceEntries = true };
+        var closes = Series(60, 88m, 0.20m);
+        var snapshot = Snapshot(closes, closes, fundingRate: settings.MaxAbsFundingRateForEntry + 0.0001m);
 
         var decision = engine.Evaluate(settings, snapshot, openPositionSide: null);
 
         Assert.Equal(CrossMarketAction.OpenShort, decision.Action);
-        Assert.Contains("EntryQualityConfirmed", decision.Reason);
+        Assert.Contains("TESTNET_EVIDENCE_FALLBACK", decision.Reason);
     }
 
-    private static SpotFuturesCrossMarketSignalEngine CreateEngine(params TrendAnalysisResult[] trendResults)
+    private static SpotFuturesCrossMarketSignalEngine CreateEngine()
         => new(
-            new FakeTrendStateService(trendResults),
+            new FakeTrendStateService(),
             new FakeAtrService(),
             NullLogger<SpotFuturesCrossMarketSignalEngine>.Instance);
 
     private static SpotFuturesCrossMarketSettings BaseSettings()
         => new()
         {
-            Symbol = TradingSymbol.BNBUSDT,
-            Symbols = [TradingSymbol.BNBUSDT],
-            Interval = "15m",
+            Symbol = TradingSymbol.BTCUSDT,
+            Symbols = [TradingSymbol.BTCUSDT],
+            Interval = "1m",
+            RegimeInterval = "15m",
             ShortMaPeriod = 7,
-            LongMaPeriod = 25,
-            MomentumLookbackCandles = 4,
-            MinEntryTrendConfidenceScore = 45,
+            LongMaPeriod = 20,
+            MomentumLookbackCandles = 3,
+            RegimeShortMaPeriod = 12,
+            RegimeLongMaPeriod = 36,
+            MinRegimeAdx = 10m,
+            RsiPeriod = 14,
+            LongRsiMin = 42m,
+            LongRsiMax = 82m,
+            ShortRsiMin = 18m,
+            ShortRsiMax = 58m,
+            EntryBreakoutLookbackCandles = 8,
+            EntryPullbackLookbackCandles = 4,
+            MinEntryVolumeRatio = 0.20m,
+            MinLongTakerBuyRatio = 0.48m,
+            MaxShortTakerBuyRatio = 0.52m,
+            MaxEntryExtensionAtr = 3m,
+            MinRewardRiskRatio = 1.60m,
+            RequireEntryClosedCandleDirectionConfirmation = false,
+            RequireMicrostructureConfirmation = false,
             MaxAbsFundingRateForEntry = 0.0008m,
-            MaxAbsBasisPercentForEntry = 1.0m,
-            AtrStopMultiplier = 1.6m,
-            AtrTargetMultiplier = 2.4m,
-            MinStopPercent = 0.35m,
-            MaxStopPercent = 2.0m,
-            FeeAndSpreadPercent = 0.15m,
-            MinNetExpectedMovePercent = 0.10m
-        };
-
-    private static SpotFuturesCrossMarketSettings QualitySettings()
-        => BaseSettings() with
-        {
-            EnableEntryQualityFilters = true,
-            RequireEntryClosedCandleDirectionConfirmation = true,
-            MinEntrySpotMomentumAbsPercent = 0.10m,
-            EntryExhaustionLookbackCandles = 8,
-            EntryExhaustionExtremeZonePercent = 15m,
-            EntryExhaustionMinMovePercent = 0.50m
+            MaxAbsBasisPercentForEntry = 1m,
+            TestnetEvidenceMaxAbsBasisPercent = 1m,
+            AtrStopMultiplier = 1.4m,
+            MinStopPercent = 0.20m,
+            MaxStopPercent = 1m,
+            FeeAndSpreadPercent = 0.10m,
+            MinNetExpectedMovePercent = 0.05m
         };
 
     private static CrossMarketSnapshot Snapshot(
         IReadOnlyList<decimal> spotCloses,
         IReadOnlyList<decimal> futuresCloses,
-        IReadOnlyList<decimal>? futuresLows = null,
-        IReadOnlyList<decimal>? futuresHighs = null)
+        decimal basisPercent = 0m,
+        decimal? fundingRate = 0m)
     {
-        var spot = Market(TradingSymbol.BNBUSDT, spotCloses);
-        var futures = Market(
-            TradingSymbol.BNBUSDT,
-            futuresCloses,
-            lows: futuresLows,
-            highs: futuresHighs);
+        var spot = Market(TradingSymbol.BTCUSDT, spotCloses);
+        var futures = Market(TradingSymbol.BTCUSDT, futuresCloses);
 
         return new CrossMarketSnapshot
         {
-            Symbol = TradingSymbol.BNBUSDT,
-            Interval = "15m",
-            CandleOpenTimeUtc = new DateTime(2026, 7, 13, 13, 30, 0, DateTimeKind.Utc),
-            CandleCloseTimeUtc = new DateTime(2026, 7, 13, 13, 44, 59, 999, DateTimeKind.Utc),
+            Symbol = TradingSymbol.BTCUSDT,
+            Interval = "1m",
+            CandleOpenTimeUtc = new DateTime(2026, 7, 20, 10, 0, 0, DateTimeKind.Utc),
+            CandleCloseTimeUtc = new DateTime(2026, 7, 20, 10, 0, 59, DateTimeKind.Utc),
             MarketsInSync = true,
             Spot = spot,
             Futures = futures,
+            RegimeSpot = spot,
+            RegimeFutures = futures,
             SpotClose = spotCloses[^1],
             FuturesClose = futuresCloses[^1],
-            BasisPercent = 0m,
-            FundingRate = 0m,
+            BasisPercent = basisPercent,
+            FundingRate = fundingRate,
             MarkPrice = futuresCloses[^1]
         };
     }
 
-    private static MarketSnapshot Market(
-        TradingSymbol symbol,
-        IReadOnlyList<decimal> closes,
-        IReadOnlyList<decimal>? lows = null,
-        IReadOnlyList<decimal>? highs = null)
-    {
-        highs ??= closes.Select(c => c + 0.20m).ToArray();
-        lows ??= closes.Select(c => c - 0.20m).ToArray();
-
-        return new MarketSnapshot
+    private static MarketSnapshot Market(TradingSymbol symbol, IReadOnlyList<decimal> closes)
+        => new()
         {
             Symbol = symbol,
             CurrentPrice = closes[^1],
             CurrentPriceSource = "ClosedCandle",
             CurrentPriceAsOfUtc = DateTime.UtcNow,
+            OpenPrices = closes.Select(c => c - 0.02m).ToArray(),
+            HighPrices = closes.Select(c => c + 0.10m).ToArray(),
+            LowPrices = closes.Select(c => c - 0.10m).ToArray(),
             ClosePrices = closes,
-            HighPrices = highs,
-            LowPrices = lows,
-            Volumes = closes.Select(_ => 100m).ToArray()
+            Volumes = closes.Select(_ => 100m).ToArray(),
+            TakerBuyBaseVolumes = closes.Select(_ => 50m).ToArray()
         };
-    }
 
-    private static TrendAnalysisResult BullishTrend() => new()
+    private static IReadOnlyList<decimal> Series(int count, decimal start, decimal step)
+        => Enumerable.Range(0, count).Select(i => start + i * step).ToArray();
+
+    private sealed class FakeTrendStateService : ITrendStateService
     {
-        IsValid = true,
-        CurrentTrendState = TrendState.Bullish,
-        IsBullishTrendConfirmed = true,
-        ConfidenceScore = 80,
-        ShortMaSlopePercent = 0.001m,
-        TrendStrengthPercent = 0.002m
-    };
-
-    private static TrendAnalysisResult BearishTrend() => new()
-    {
-        IsValid = true,
-        CurrentTrendState = TrendState.Bearish,
-        IsBearishTrendConfirmed = true,
-        ConfidenceScore = 80,
-        ShortMaSlopePercent = -0.001m,
-        TrendStrengthPercent = 0.002m
-    };
-
-    private sealed class FakeTrendStateService(IEnumerable<TrendAnalysisResult> results) : ITrendStateService
-    {
-        private readonly Queue<TrendAnalysisResult> _results = new(results);
-
         public int GetRequiredPeriods(int shortPeriod, int longPeriod) => 2;
 
         public TrendAnalysisResult Analyze(MarketSnapshot marketData, int shortPeriod, int longPeriod)
-            => _results.Dequeue();
+            => new()
+            {
+                IsValid = true,
+                CurrentTrendState = TrendState.Neutral,
+                ConfidenceScore = 60
+            };
     }
 
     private sealed class FakeAtrService : IAtrService

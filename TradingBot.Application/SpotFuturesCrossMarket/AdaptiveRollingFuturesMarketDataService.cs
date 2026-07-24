@@ -104,12 +104,15 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
             if (maxAgeMs > settings.MarketDataMaxAgeMs)
                 return state.ToInvalidSnapshot("MarketDataStale", now, maxAgeMs, streamLatencyMs);
 
+            var bestExecutable = positionSide == OrderSide.BUY ? state.BestBidPrice : state.BestAskPrice;
             var closeSideLevels = positionSide == OrderSide.BUY ? state.Bids : state.Asks;
-            var estimatedVwap = EstimateVwap(closeSideLevels, closeQuantity, out var filledQty);
-            if (filledQty < closeQuantity || estimatedVwap <= 0m)
+            var filledQty = 0m;
+            var estimatedVwap = closeQuantity > 0m
+                ? EstimateVwap(closeSideLevels, closeQuantity, out filledQty)
+                : bestExecutable;
+            if (closeQuantity > 0m && (filledQty < closeQuantity || estimatedVwap <= 0m))
                 return state.ToInvalidSnapshot("DepthInsufficientForRemainingQuantity", now, maxAgeMs, streamLatencyMs);
 
-            var bestExecutable = positionSide == OrderSide.BUY ? state.BestBidPrice : state.BestAskPrice;
             var estimatedSlippageBps = bestExecutable > 0m
                 ? positionSide == OrderSide.BUY
                     ? Math.Max(0m, (bestExecutable - estimatedVwap) / bestExecutable * 10_000m)

@@ -144,7 +144,8 @@ public sealed class SpotFuturesCrossMarketCloseOrderService(
             closeQuantity.Quantity,
             reduceOnly: true,
             cancellationToken,
-            positionSide: closeQuantity.PositionSide);
+            positionSide: closeQuantity.PositionSide,
+            clientOrderId: request.CorrelationId);
         var acknowledgedAt = DateTime.UtcNow;
         var (fills, avgPrice, filledQty, exitFee) = await ResolveFillAsync(position.Symbol.ToString(), result, cancellationToken);
         var filledAt = DateTime.UtcNow;
