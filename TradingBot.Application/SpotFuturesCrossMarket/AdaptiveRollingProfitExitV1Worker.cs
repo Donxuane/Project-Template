@@ -20,12 +20,14 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
     ILogger<AdaptiveRollingProfitExitV1Worker> logger) : BackgroundService
 {
     private const string Env = SpotFuturesCrossMarketSettings.ExecutionEnvironment;
+    private static readonly TimeSpan EmptyHeartbeatInterval = TimeSpan.FromSeconds(30);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ConcurrentDictionary<long, int> _exitConfirmations = new();
     private readonly ConcurrentDictionary<long, int> _lossCutConfirmations = new();
     private readonly ConcurrentDictionary<long, DateTime> _lastEvaluationPersistUtc = new();
     private readonly ConcurrentDictionary<long, DateTime> _lastDynamicUpdateUtc = new();
     private readonly ConcurrentDictionary<long, (string Reason, DateTime LoggedAtUtc)> _lastMarketDataDegradedLog = new();
+    private DateTime _nextEmptyHeartbeatUtc = DateTime.MinValue;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -68,6 +70,7 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
             {
                 await RunCycleAsync(settings, crossSettings, stoppingToken);
                 await Task.Delay(TimeSpan.FromMilliseconds(settings.EvaluationIntervalMs), stoppingToken);
+                logger.LogInformation("AdaptiveRollingProfitExitV1Worker cycle finished");
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -78,7 +81,7 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
                 logger.LogError(ex, "AdaptiveRollingProfitExitV1 cycle failed.");
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
             }
-        }
+         }
     }
 
     private async Task RunCycleAsync(
@@ -110,15 +113,27 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
 
         await RunCounterfactualsAsync(counterfactuals, settings, sp, cancellationToken);
 
-        logger.LogInformation(
-            "AdaptiveRollingProfitExitV1 heartbeat. OpenPositions={OpenPositions} Counterfactuals={Counterfactuals} Monitoring={Monitoring} Eligible={Eligible} Armed={Armed} Riding={Riding} Closing={Closing}",
-            openPositions.Count,
-            counterfactuals.Count,
-            counts.GetValueOrDefault(AdaptiveRollingProfitExitState.Monitoring),
-            counts.GetValueOrDefault(AdaptiveRollingProfitExitState.ProfitEligible),
-            counts.GetValueOrDefault(AdaptiveRollingProfitExitState.ProfitArmed),
-            counts.GetValueOrDefault(AdaptiveRollingProfitExitState.RidingTrend),
-            counts.GetValueOrDefault(AdaptiveRollingProfitExitState.Closing));
+        var hasTrackedWork = openPositions.Count > 0 || counterfactuals.Count > 0;
+        var now = DateTime.UtcNow;
+        var shouldLogHeartbeat = hasTrackedWork || now >= _nextEmptyHeartbeatUtc;
+
+        if (hasTrackedWork)
+            _nextEmptyHeartbeatUtc = DateTime.MinValue;
+        else if (shouldLogHeartbeat)
+            _nextEmptyHeartbeatUtc = now.Add(EmptyHeartbeatInterval);
+
+        if (shouldLogHeartbeat)
+        {
+            logger.LogInformation(
+                "AdaptiveRollingProfitExitV1 heartbeat. OpenPositions={OpenPositions} Counterfactuals={Counterfactuals} Monitoring={Monitoring} Eligible={Eligible} Armed={Armed} Riding={Riding} Closing={Closing}",
+                openPositions.Count,
+                counterfactuals.Count,
+                counts.GetValueOrDefault(AdaptiveRollingProfitExitState.Monitoring),
+                counts.GetValueOrDefault(AdaptiveRollingProfitExitState.ProfitEligible),
+                counts.GetValueOrDefault(AdaptiveRollingProfitExitState.ProfitArmed),
+                counts.GetValueOrDefault(AdaptiveRollingProfitExitState.RidingTrend),
+                counts.GetValueOrDefault(AdaptiveRollingProfitExitState.Closing));
+        }
     }
 
     private async Task<AdaptiveRollingProfitExitStateRecord> EvaluatePositionAsync(
@@ -153,7 +168,18 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
             state.LastRejectionReason = snapshot.DegradedReason ?? "MarketDataUnavailable";
             state.LastEvaluatedAtUtc = now;
             await rollingRepository.UpsertStateAsync(state, cancellationToken);
-            await PersistEvaluationAsync(rollingRepository, state, position, snapshot, null, "SkippedMarketDataDegraded", state.LastRejectionReason, false, cancellationToken);
+            if (ShouldPersistEvaluation(position.Id, settings, now))
+            {
+                await PersistEvaluationAsync(
+                    rollingRepository,
+                    state,
+                    position,
+                    snapshot,
+                    null,
+                    "SkippedMarketDataDegraded",
+                    state.LastRejectionReason,
+                    cancellationToken);
+            }
             if (ShouldLogMarketDataDegraded(position.Id, state.LastRejectionReason, now))
             {
                 logger.LogWarning(
@@ -203,7 +229,7 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
         await rollingRepository.UpsertStateAsync(state, cancellationToken);
 
         if (shouldPersistEvaluation)
-            await PersistEvaluationAsync(rollingRepository, state, position, snapshot, projection, decision.Label, decision.RejectionReason, true, cancellationToken);
+            await PersistEvaluationAsync(rollingRepository, state, position, snapshot, projection, decision.Label, decision.RejectionReason, cancellationToken);
 
         logger.LogInformation(
             "AdaptiveRollingProfitExitV1 evaluated. PositionId={PositionId} Symbol={Symbol} Side={Side} State={State} NetPnl={NetPnl:F6} Peak={Peak:F6} Giveback={Giveback:F6} Score={Score:F2} Decision={Decision} Reason={Reason}",
@@ -302,10 +328,10 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
         // excluded because they are in profit territory and handled by giveback/collapse logic.
         if (!isArmed && settings.EnableEarlyLossCut)
         {
-            var lossFloor = settings.EarlyLossCutGrossFloor(entryNotional);
+            var lossFloor = settings.EarlyLossCutProjectedNetFloor(entryNotional);
             var positionAgeOk = position.OpenedAt.HasValue &&
                                 (now - position.OpenedAt.Value).TotalSeconds >= settings.EarlyLossCutMinPositionAgeSeconds;
-            var losingBeyondFloor = projection.GrossPnl <= -lossFloor;
+            var losingBeyondFloor = projection.ProjectedNetPnl <= -lossFloor;
             var trendAgainst = trendFlow.Score <= settings.EarlyLossCutTrendScoreMax &&
                                trendFlow.DirectionNormalizedVelocityBps < 0m;
 
@@ -318,7 +344,7 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
                 {
                     return new RollingDecision(
                         "EarlyLossCutPending",
-                        $"Gross {projection.GrossPnl:F6} <= -{lossFloor:F6} with adverse trend score {trendFlow.Score:F2}. Confirmation {lossCutConfirmations}/{settings.EarlyLossCutConfirmationObservations}.",
+                        $"Projected net {projection.ProjectedNetPnl:F6} <= -{lossFloor:F6} with adverse trend score {trendFlow.Score:F2}. Confirmation {lossCutConfirmations}/{settings.EarlyLossCutConfirmationObservations}.",
                         false,
                         previousState != state.State);
                 }
@@ -326,7 +352,7 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
                 Transition(state, AdaptiveRollingProfitExitState.ExitPending, now);
                 return new RollingDecision(
                     "ExitEarlyLossCut",
-                    $"Early loss cut: gross {projection.GrossPnl:F6} <= -{lossFloor:F6}, net {projection.ProjectedNetPnl:F6}, trend score {trendFlow.Score:F2}, velocity {trendFlow.DirectionNormalizedVelocityBps:F2}bps.",
+                    $"Early loss cut: projected net {projection.ProjectedNetPnl:F6} <= -{lossFloor:F6}, gross {projection.GrossPnl:F6}, trend score {trendFlow.Score:F2}, velocity {trendFlow.DirectionNormalizedVelocityBps:F2}bps.",
                     true,
                     true,
                     PositionExitReason.RiskExit,
@@ -743,7 +769,6 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
         AdaptiveRollingProfitProjectedPnl? projection,
         string decision,
         string? rejectionReason,
-        bool isMarketDataFresh,
         CancellationToken cancellationToken)
     {
         var giveback = projection is null ? 0m : Math.Max(0m, state.PeakProjectedNetPnl - projection.ProjectedNetPnl);
@@ -784,7 +809,7 @@ public sealed class AdaptiveRollingProfitExitV1Worker(
             EvaluatedAtUtc = DateTime.UtcNow,
             MarketDataAgeMs = snapshot.MarketDataAgeMs == long.MaxValue ? int.MaxValue : snapshot.MarketDataAgeMs,
             StreamLatencyMs = snapshot.StreamLatencyMs,
-            IsMarketDataFresh = isMarketDataFresh,
+            IsMarketDataFresh = snapshot.IsFresh,
             Decision = decision,
             RejectionReason = rejectionReason,
             SnapshotJson = JsonSerializer.Serialize(snapshot, JsonOptions)

@@ -16,6 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="AdaptiveRollingFuturesMarketDataServiceTests.cs" />
     <Compile Include="AdaptiveRollingProfitExitV1Tests.cs" />
     <Compile Include="FuturesTestnetClientTests.cs" />
     <Compile Include="SpotFuturesCrossMarketSignalEngineTests.cs" />

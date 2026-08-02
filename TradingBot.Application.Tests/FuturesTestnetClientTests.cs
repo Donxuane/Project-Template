@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using TradingBot.Domain.Enums.Binance;
+using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Percistance.Services.Main;
 using Xunit;
 
@@ -82,7 +83,17 @@ public sealed class FuturesTestnetClientTests
         return new FuturesTestnetClient(
             new HttpClient(handler) { BaseAddress = new Uri(baseUrl) },
             configuration,
-            NullLogger<FuturesTestnetClient>.Instance);
+            NullLogger<FuturesTestnetClient>.Instance,
+            new FixedTimeSyncService());
+    }
+
+    private sealed class FixedTimeSyncService : ITimeSyncService
+    {
+        public Task<long> GetAdjustedTimestampAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+        public Task<long> RefreshOffsetAsync(CancellationToken cancellationToken = default)
+            => GetAdjustedTimestampAsync(cancellationToken);
     }
 
     private sealed class SequenceHandler(params Func<HttpRequestMessage, HttpResponseMessage>[] steps)

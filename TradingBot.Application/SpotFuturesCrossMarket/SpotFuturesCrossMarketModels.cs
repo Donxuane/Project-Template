@@ -16,6 +16,50 @@ public enum CrossMarketAction
     CloseShort = 4
 }
 
+/// <summary>Outcome of one deterministic entry gate.</summary>
+public enum EntryGateState
+{
+    NotEvaluated = 0,
+    Pass = 1,
+    Fail = 2
+}
+
+/// <summary>One gate outcome, including the market values used to reach it.</summary>
+public sealed record EntryGateResult(
+    string Gate,
+    EntryGateState State,
+    string Detail);
+
+/// <summary>Ordered gate outcomes for one candidate entry direction.</summary>
+public sealed record EntrySideGateTrace(
+    string Side,
+    bool SetupQualified,
+    string? PrimaryRejection,
+    IReadOnlyList<EntryGateResult> Gates);
+
+/// <summary>Long and short entry diagnostics from one closed-candle evaluation.</summary>
+public sealed record CrossMarketEntryGateTrace(
+    EntrySideGateTrace Long,
+    EntrySideGateTrace Short)
+{
+    /// <summary>
+    /// Compact, stable representation persisted inside the existing decision reason column.
+    /// Detailed values remain available in the structured report/Redis representation.
+    /// </summary>
+    public string ToCompactString()
+        => $"long{{{Compact(Long)}}} short{{{Compact(Short)}}}";
+
+    private static string Compact(EntrySideGateTrace trace)
+        => string.Join(',', trace.Gates.Select(g => $"{g.Gate}={StateCode(g.State)}"));
+
+    private static char StateCode(EntryGateState state) => state switch
+    {
+        EntryGateState.Pass => 'P',
+        EntryGateState.Fail => 'F',
+        _ => 'N'
+    };
+}
+
 /// <summary>
 /// Synchronized Spot + USD-M Futures view of one symbol, anchored on the latest candle that
 /// is fully closed on BOTH markets. Spot provides leading context; Futures is the traded
@@ -69,6 +113,12 @@ public sealed class CrossMarketDecision
 {
     public CrossMarketAction Action { get; init; } = CrossMarketAction.NoTrade;
     public string Reason { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Full long/short entry gate state. Null for position-management decisions where entry
+    /// qualification is intentionally not evaluated.
+    /// </summary>
+    public CrossMarketEntryGateTrace? EntryGateTrace { get; init; }
 
     public TrendState SpotTrendState { get; init; }
     public int SpotTrendConfidenceScore { get; init; }

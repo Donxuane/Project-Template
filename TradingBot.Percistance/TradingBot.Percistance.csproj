@@ -25,9 +25,12 @@
     <Compile Include="Repositories\SpotFuturesCrossMarketEvaluationRepository.cs" />
     <Compile Include="Repositories\TradeExecutionDecisionsRepository.cs" />
     <Compile Include="Repositories\TradeExecutionRepository.cs" />
+    <Compile Include="Services\BinanceClientService.cs" />
     <Compile Include="Services\Main\FuturesTestnetClient.cs" />
     <Compile Include="Services\Main\SpotMarketDataClient.cs" />
+    <Compile Include="Services\Shared\BinanceEndpointService.cs" />
     <Compile Include="Services\Shared\RedisCacheService.cs" />
+    <Compile Include="Services\Shared\TimeSyncService.cs" />
   </ItemGroup>
 
   <ItemGroup>

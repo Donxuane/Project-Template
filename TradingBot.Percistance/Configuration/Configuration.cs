@@ -7,6 +7,7 @@ using TradingBot.Domain.Interfaces.Repositories;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Interfaces.Services.Cache;
 using TradingBot.Percistance.Repositories;
+using TradingBot.Percistance.Services;
 using TradingBot.Percistance.Services.Main;
 using TradingBot.Percistance.Services.Shared;
 
@@ -25,6 +26,19 @@ public static class Configuration
         services.AddScoped<ISpotFuturesCrossMarketEvaluationRepository, SpotFuturesCrossMarketEvaluationRepository>();
         services.AddScoped<IAdaptiveRollingProfitExitRepository, AdaptiveRollingProfitExitRepository>();
         services.AddScoped<IRedisCacheService, RedisCacheService>();
+        services.AddScoped<IBinanceEndpointsService, BinanceEndpointService>();
+        services.AddScoped<ITimeSyncService, TimeSyncService>();
+
+        services.AddHttpClient<IBinanceClientService, BinanceClientService>((sp, client) =>
+        {
+            var currentConfiguration = sp.GetRequiredService<IConfiguration>();
+            var baseUrl = currentConfiguration["BaseURL"];
+            client.BaseAddress = new Uri(string.IsNullOrWhiteSpace(baseUrl)
+                ? "https://testnet.binance.vision"
+                : baseUrl);
+            client.Timeout = TimeSpan.FromSeconds(
+                Math.Max(1, currentConfiguration.GetValue<int?>("Binance:Http:TimeoutSeconds") ?? 15));
+        });
 
         services.AddHttpClient<IFuturesTestnetClient, FuturesTestnetClient>((sp, client) =>
         {

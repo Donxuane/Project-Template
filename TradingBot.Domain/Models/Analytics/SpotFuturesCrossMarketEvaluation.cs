@@ -50,6 +50,13 @@ public sealed class SpotFuturesCrossMarketEvaluation
     /// <summary>OpenLong / OpenShort / CloseLong / CloseShort / NoTrade.</summary>
     public string DecisionLabel { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Structured long/short gate diagnostics serialized for Redis/report consumers. The
+    /// compact gate states are also embedded in <see cref="Reason"/> for database durability.
+    /// </summary>
+    public string? EntryGateTraceJson { get; set; }
+
     public bool Executed { get; set; }
     public long? PositionId { get; set; }
     public long? LocalOrderId { get; set; }

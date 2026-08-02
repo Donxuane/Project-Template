@@ -1,13 +1,18 @@
 ﻿using TradingBot.Domain.Enums.General;
 using TradingBot.Domain.Interfaces.Services;
 using TradingBot.Domain.Interfaces.Services.Cache;
+using TradingBot.Domain.Models.App;
+using Microsoft.Extensions.Configuration;
+using System.Net.Http.Json;
 
 namespace TradingBot.Percistance.Services.Shared;
 
-public class TimeSyncService(IRedisCacheService redisCacheService, 
-    IBinanceEndpointsService binanceEndpointsService) : ITimeSyncService
+public sealed class TimeSyncService(
+    IRedisCacheService redisCacheService,
+    IHttpClientFactory httpClientFactory,
+    IConfiguration configuration) : ITimeSyncService
 {
-    public const string RedisKeyTimestampOffset = "Binance:TimestampOffsetMs";
+    public const string RedisKeyTimestampOffset = "Binance:FuturesTestnet:TimestampOffsetMs";
 
     public async Task<long> GetAdjustedTimestampAsync(CancellationToken cancellationToken = default)
     {
@@ -24,13 +29,21 @@ public class TimeSyncService(IRedisCacheService redisCacheService,
 
     public async Task<long> RefreshOffsetAsync(CancellationToken cancellationToken = default)
     {
-        var serverTimeEndpoint = binanceEndpointsService.GetEndpoint(GeneralApis.CheckServerTime);
-        var response = await toolService.BinanceClientService.Call<ServerTimeResponse, EmptyRequest>(
-            null, serverTimeEndpoint, false);
+        var baseUrl = configuration["FuturesTestnet:BaseUrl"];
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            baseUrl = "https://demo-fapi.binance.com";
+
+        var client = httpClientFactory.CreateClient();
+        var beforeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var response = await client.GetFromJsonAsync<ServerTimeResponse>(
+                           $"{baseUrl.TrimEnd('/')}/fapi/v1/time",
+                           cancellationToken)
+                       ?? throw new InvalidOperationException("Binance Futures testnet did not return its server time.");
+        var afterMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         var serverMs = response.ServerTime;
-        var local = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var offset = serverMs - local;
+        var localMidpointMs = beforeMs + (afterMs - beforeMs) / 2;
+        var offset = serverMs - localMidpointMs;
 
         await redisCacheService.SetCacheValue(RedisKeyTimestampOffset, offset);
         return serverMs;

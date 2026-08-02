@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using TradingBot.Application.OuterHostes;
 using TradingBot.Application.SpotFuturesCrossMarket;
 using TradingBot.Domain.Interfaces.Services;
 
@@ -21,6 +22,7 @@ public static class Configuration
         services.AddHostedService<SpotFuturesCrossMarket.SpotFuturesCrossMarketTestnetV1Worker>();
         services.AddHostedService<SpotFuturesCrossMarket.AdaptiveRollingFuturesFeeRefreshWorker>();
         services.AddHostedService<SpotFuturesCrossMarket.AdaptiveRollingProfitExitV1Worker>();
+        services.AddHostedService<TimeSyncWorker>();
 
         services.Configure<TrendStateSettings>(configuration.GetSection(TrendStateSettings.SectionName));
         services.AddScoped<ITrendStateService, TrendStateService>();

@@ -1,20 +1,15 @@
 using Serilog;
-using Serilog.Debugging;
+using TradingBot;
 using TradingBot.Application.Configuration;
 using TradingBot.Percistance.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
-
-SelfLog.Enable(Console.Error);
-builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
-    .ReadFrom.Configuration(context.Configuration)
-    .ReadFrom.Services(services)
-    .Enrich.WithMachineName()
-    .Enrich.WithProperty("Application", "TradingBot")
-    .Enrich.FromLogContext());
+builder.ConfigurationExtention();
 
 builder.Services.AddSpotFuturesInfrastructure(builder.Configuration);
 builder.Services.AddSpotFuturesFeature(builder.Configuration);
+builder.Services.LoggerConfigure(builder.Configuration);
+
 
 var app = builder.Build();
 

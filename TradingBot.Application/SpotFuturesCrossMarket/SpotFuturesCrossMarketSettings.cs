@@ -55,6 +55,11 @@ public sealed record SpotFuturesCrossMarketSettings
     // Signal engine.
     public int ShortMaPeriod { get; init; } = 7;
     public int LongMaPeriod { get; init; } = 25;
+    /// <summary>
+    /// Maximum spot-side distance from the execution slow EMA that is still treated as
+    /// aligned. Futures remains strict because it is the traded venue.
+    /// </summary>
+    public decimal ExecutionTrendSpotToleranceBps { get; init; }
     public int MomentumLookbackCandles { get; init; } = 4;
     public int MinEntryTrendConfidenceScore { get; init; } = 45;
     public int MinExitTrendConfidenceScore { get; init; } = 35;
@@ -183,6 +188,7 @@ public sealed record SpotFuturesCrossMarketSettings
             CandleHistory = Math.Clamp(section.GetValue("CandleHistory", 80), 40, 1000),
             ShortMaPeriod = Math.Max(2, section.GetValue("ShortMaPeriod", 7)),
             LongMaPeriod = Math.Max(5, section.GetValue("LongMaPeriod", 25)),
+            ExecutionTrendSpotToleranceBps = Math.Clamp(section.GetValue("ExecutionTrendSpotToleranceBps", 0m), 0m, 25m),
             MomentumLookbackCandles = Math.Max(1, section.GetValue("MomentumLookbackCandles", 4)),
             MinEntryTrendConfidenceScore = Math.Clamp(section.GetValue("MinEntryTrendConfidenceScore", 45), 0, 100),
             MinExitTrendConfidenceScore = Math.Clamp(section.GetValue("MinExitTrendConfidenceScore", 35), 0, 100),
@@ -230,7 +236,7 @@ public sealed record SpotFuturesCrossMarketSettings
             MaxConsecutiveLosses = Math.Max(1, section.GetValue("MaxConsecutiveLosses", 4)),
             MaxHoldMinutes = Math.Max(1, section.GetValue("MaxHoldMinutes", 360)),
             ReentryCooldownCandles = Math.Max(0, section.GetValue("ReentryCooldownCandles", 1)),
-            IntervalSeconds = Math.Max(10, section.GetValue("IntervalSeconds", 30)),
+            IntervalSeconds = section.GetValue("IntervalSeconds", 10),
             ReportOutputDirectory = ResolvePath(contentRootPath, reportDir)
         };
     }

@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <Compile Include="Configuration\Configuration.cs" />
+    <Compile Include="OuterHostes\TimeSyncWorker.cs" />
     <Compile Include="SpotFuturesCrossMarket\*.cs" />
   </ItemGroup>
 

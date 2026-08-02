@@ -205,13 +205,30 @@ public sealed class SpotFuturesCrossMarketCloseOrderService(
             : position.Quantity;
 
         decimal exchangeQuantity = 0m;
+        var exchangePositionObserved = false;
         string? positionSide = null;
         try
         {
             var risk = await futuresClient.GetPositionRiskAsync(position.Symbol.ToString(), cancellationToken);
             if (risk is not null)
             {
+                exchangePositionObserved = true;
                 exchangeQuantity = Math.Abs(risk.PositionAmt);
+                if (exchangeQuantity > 0m)
+                {
+                    var exchangeSide = risk.PositionAmt > 0m ? OrderSide.BUY : OrderSide.SELL;
+                    if (exchangeSide != position.Side)
+                    {
+                        logger.LogError(
+                            "SpotFuturesCrossMarket close blocked: local and exchange position sides differ. PositionId={PositionId} Symbol={Symbol} LocalSide={LocalSide} ExchangeSide={ExchangeSide}",
+                            position.Id,
+                            position.Symbol,
+                            position.Side,
+                            exchangeSide);
+                        return new CloseQuantityResolution(0m, null);
+                    }
+                }
+
                 if (!string.Equals(risk.PositionSide, "BOTH", StringComparison.OrdinalIgnoreCase) &&
                     !string.IsNullOrWhiteSpace(risk.PositionSide))
                 {
@@ -234,6 +251,9 @@ public sealed class SpotFuturesCrossMarketCloseOrderService(
                 "SpotFuturesCrossMarket exchange position reconciliation failed before close; falling back to local remaining quantity. PositionId={PositionId}",
                 position.Id);
         }
+
+        if (exchangePositionObserved && exchangeQuantity <= 0m)
+            return new CloseQuantityResolution(0m, positionSide);
 
         var rawQuantity = exchangeQuantity > 0m ? Math.Min(localQuantity, exchangeQuantity) : localQuantity;
         if (rawQuantity <= 0m)

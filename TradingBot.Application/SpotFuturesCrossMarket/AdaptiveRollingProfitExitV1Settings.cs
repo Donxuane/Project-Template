@@ -53,11 +53,14 @@ public sealed record AdaptiveRollingProfitExitV1Settings
     public int FundingRefreshIntervalMinutes { get; init; } = 15;
 
     public bool EnableEarlyLossCut { get; init; } = true;
-    public decimal EarlyLossCutGrossLossBps { get; init; } = 10m;
-    public decimal EarlyLossCutMinGrossLossUsdt { get; init; } = 5m;
+    public decimal EarlyLossCutProjectedNetLossBps { get; init; } = 10m;
+    public decimal EarlyLossCutMinProjectedNetLossUsdt { get; init; } = 1.50m;
     public decimal EarlyLossCutTrendScoreMax { get; init; } = -25m;
     public int EarlyLossCutConfirmationObservations { get; init; } = 10;
     public int EarlyLossCutMinPositionAgeSeconds { get; init; } = 120;
+
+    public bool EnableRideTrendHoldExtension { get; init; }
+    public int RideTrendMaxHoldExtensionMinutes { get; init; } = 10;
 
     public bool EnableHardProfitLock { get; init; } = true;
     public decimal HardProfitLockTierUsdt { get; init; } = 1.50m;
@@ -123,11 +126,13 @@ public sealed record AdaptiveRollingProfitExitV1Settings
             FeeRefreshMaxRetries = Math.Max(1, section.GetValue("FeeRefreshMaxRetries", 3)),
             FundingRefreshIntervalMinutes = Math.Max(1, section.GetValue("FundingRefreshIntervalMinutes", 15)),
             EnableEarlyLossCut = section.GetValue("EnableEarlyLossCut", true),
-            EarlyLossCutGrossLossBps = Math.Max(1m, section.GetValue("EarlyLossCutGrossLossBps", 10m)),
-            EarlyLossCutMinGrossLossUsdt = Math.Max(0m, section.GetValue("EarlyLossCutMinGrossLossUsdt", 5m)),
+            EarlyLossCutProjectedNetLossBps = Math.Max(1m, section.GetValue("EarlyLossCutProjectedNetLossBps", 10m)),
+            EarlyLossCutMinProjectedNetLossUsdt = Math.Max(0m, section.GetValue("EarlyLossCutMinProjectedNetLossUsdt", 1.50m)),
             EarlyLossCutTrendScoreMax = Math.Min(0m, section.GetValue("EarlyLossCutTrendScoreMax", -25m)),
             EarlyLossCutConfirmationObservations = Math.Max(1, section.GetValue("EarlyLossCutConfirmationObservations", 10)),
             EarlyLossCutMinPositionAgeSeconds = Math.Max(0, section.GetValue("EarlyLossCutMinPositionAgeSeconds", 120)),
+            EnableRideTrendHoldExtension = section.GetValue("EnableRideTrendHoldExtension", false),
+            RideTrendMaxHoldExtensionMinutes = Math.Max(0, section.GetValue("RideTrendMaxHoldExtensionMinutes", 10)),
             EnableHardProfitLock = section.GetValue("EnableHardProfitLock", true),
             HardProfitLockTierUsdt = Math.Max(0m, section.GetValue("HardProfitLockTierUsdt", 1.50m)),
             HardProfitLockTierBps = Math.Max(0m, section.GetValue("HardProfitLockTierBps", 12m)),
@@ -156,8 +161,8 @@ public sealed record AdaptiveRollingProfitExitV1Settings
     public decimal HardProfitTier(decimal entryNotional)
         => Math.Max(HardProfitLockTierUsdt, entryNotional * HardProfitLockTierBps / 10_000m);
 
-    public decimal EarlyLossCutGrossFloor(decimal entryNotional)
-        => Math.Max(EarlyLossCutMinGrossLossUsdt, entryNotional * EarlyLossCutGrossLossBps / 10_000m);
+    public decimal EarlyLossCutProjectedNetFloor(decimal entryNotional)
+        => Math.Max(EarlyLossCutMinProjectedNetLossUsdt, entryNotional * EarlyLossCutProjectedNetLossBps / 10_000m);
 
     private static string CleanKey(string? value, string fallback)
     {

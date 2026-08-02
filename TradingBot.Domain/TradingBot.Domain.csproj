@@ -23,6 +23,7 @@
     <Compile Include="Enums\TrendState.cs" />
     <Compile Include="Enums\Binance\OrderSide.cs" />
     <Compile Include="Enums\Binance\OrderStatuses.cs" />
+    <Compile Include="Enums\General\GeneralApis.cs" />
     <Compile Include="Extensions\OrderStatusExtensions.cs" />
     <Compile Include="Interfaces\Repositories\IAdaptiveRollingProfitExitRepository.cs" />
     <Compile Include="Interfaces\Repositories\IOrderRepository.cs" />
@@ -31,7 +32,10 @@
     <Compile Include="Interfaces\Repositories\ITradeExecutionDecisionsRepository.cs" />
     <Compile Include="Interfaces\Repositories\ITradeExecutionRepository.cs" />
     <Compile Include="Interfaces\Services\IFuturesTestnetClient.cs" />
+    <Compile Include="Interfaces\Services\IBinanceClientService.cs" />
+    <Compile Include="Interfaces\Services\IBinanceEndpointsService.cs" />
     <Compile Include="Interfaces\Services\ISpotMarketDataClient.cs" />
+    <Compile Include="Interfaces\Services\ITimeSyncService.cs" />
     <Compile Include="Interfaces\Services\Cache\IRedisCacheService.cs" />
     <Compile Include="Interfaces\Services\IAtrService.cs" />
     <Compile Include="Interfaces\Services\ITrendStateService.cs" />
@@ -39,6 +43,8 @@
     <Compile Include="Models\Decision\MarketSnapshot.cs" />
     <Compile Include="Models\Decision\TradeExecutionDecisions.cs" />
     <Compile Include="Models\Decision\TrendAnalysisResult.cs" />
+    <Compile Include="Models\App\Endpoint.cs" />
+    <Compile Include="Models\App\ServerTimeResponse.cs" />
     <Compile Include="Models\Trading\AdaptiveRollingProfitExitRecords.cs" />
     <Compile Include="Models\Trading\ExecutionEnvironments.cs" />
     <Compile Include="Models\Trading\Order.cs" />

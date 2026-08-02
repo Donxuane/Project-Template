@@ -131,6 +131,7 @@ public sealed class SpotFuturesCrossMarketReportWriter(ILogger<SpotFuturesCrossM
             OpenUnrealizedPnl = openPositions.Sum(p => p.UnrealizedPnl),
             LastDecision = lastDecision?.Action.ToString() ?? string.Empty,
             LastDecisionReason = lastDecision?.Reason ?? string.Empty,
+            LastEntryGateTrace = lastDecision?.EntryGateTrace,
             Trades = trades,
             EquityCurve = equity
         };
@@ -197,6 +198,7 @@ public sealed class CrossMarketReport
     public decimal OpenUnrealizedPnl { get; init; }
     public string LastDecision { get; init; } = string.Empty;
     public string LastDecisionReason { get; init; } = string.Empty;
+    public CrossMarketEntryGateTrace? LastEntryGateTrace { get; init; }
     public IReadOnlyList<CrossMarketTradeRow> Trades { get; init; } = Array.Empty<CrossMarketTradeRow>();
     public IReadOnlyList<CrossMarketEquityPoint> EquityCurve { get; init; } = Array.Empty<CrossMarketEquityPoint>();
 }

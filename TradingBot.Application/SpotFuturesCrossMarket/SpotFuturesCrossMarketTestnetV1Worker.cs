@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 using TradingBot.Domain.Enums;
 using TradingBot.Domain.Enums.Binance;
 using TradingBot.Domain.Extensions;
@@ -43,6 +44,7 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
     private readonly Dictionary<TradingSymbol, FuturesTestnetSymbolFilters> _symbolFilters = new();
     private readonly Dictionary<TradingSymbol, DateTime> _lastProcessedCandleOpenUtc = new();
     private readonly HashSet<TradingSymbol> _lastProcessedLoaded = new();
+    private readonly HashSet<long> _loggedRideTrendHoldExtensions = new();
     private DateTime _lastExchangeReconciliationUtc = DateTime.MinValue;
     private CrossMarketDecision? _lastDecision;
 
@@ -88,10 +90,18 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
             {
                 await RunCycleAsync(settings, microstructureSettings, stoppingToken);
                 await Task.Delay(TimeSpan.FromSeconds(settings.IntervalSeconds), stoppingToken);
+                logger.LogInformation("SpotFuturesCrossMarketTestnetV1Worker cycle finished");
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
+            }
+            catch (OperationCanceledException ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "SpotFuturesCrossMarketTestnetV1 cycle was canceled without host shutdown, most likely because an HTTP request timed out. Worker will retry in 5 seconds.");
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
             }
             catch (InvalidOperationException ex) when (ex.Message.StartsWith("SpotFuturesCrossMarket", StringComparison.Ordinal))
             {
@@ -132,7 +142,7 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
             // 1) Intra-candle protective exits against the live mark price.
             if (openPosition is not null)
             {
-                openPosition = await TryProtectiveExitAsync(symbolSettings, sp, openPosition, ct);
+                openPosition = await TryProtectiveExitAsync(symbolSettings, microstructureSettings, sp, openPosition, ct);
             }
 
             // 2) Closed-candle strategy evaluation (entries, flips, signal exits).
@@ -646,6 +656,7 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
     /// <summary>Intra-candle stop-loss / take-profit / max-hold checks against the live mark price.</summary>
     private async Task<Position?> TryProtectiveExitAsync(
         SpotFuturesCrossMarketSettings settings,
+        AdaptiveRollingProfitExitV1Settings adaptiveSettings,
         IServiceProvider sp,
         Position openPosition,
         CancellationToken ct)
@@ -660,7 +671,8 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
             return openPosition;
         }
 
-        var exitReason = ResolveProtectiveExitReason(settings, openPosition, markPrice, out var closeReason);
+        var extendMaxHold = await ShouldExtendMaxHoldAsync(settings, adaptiveSettings, sp, openPosition, ct);
+        var exitReason = ResolveProtectiveExitReason(settings, openPosition, markPrice, extendMaxHold, out var closeReason);
         if (exitReason is null)
         {
             await accounting.UpdateUnrealizedAsync(openPosition, markPrice, ct);
@@ -703,6 +715,54 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         return null;
     }
 
+    private async Task<bool> ShouldExtendMaxHoldAsync(
+        SpotFuturesCrossMarketSettings settings,
+        AdaptiveRollingProfitExitV1Settings adaptiveSettings,
+        IServiceProvider sp,
+        Position position,
+        CancellationToken ct)
+    {
+        if (!adaptiveSettings.Enabled ||
+            !adaptiveSettings.EnableRideTrendHoldExtension ||
+            adaptiveSettings.RideTrendMaxHoldExtensionMinutes <= 0 ||
+            !position.OpenedAt.HasValue)
+        {
+            return false;
+        }
+
+        var now = DateTime.UtcNow;
+        var normalHoldUntil = position.OpenedAt.Value.AddMinutes(settings.MaxHoldMinutes);
+        var extendedHoldUntil = normalHoldUntil.AddMinutes(adaptiveSettings.RideTrendMaxHoldExtensionMinutes);
+        if (now < normalHoldUntil || now >= extendedHoldUntil)
+            return false;
+
+        var rollingRepository = sp.GetRequiredService<IAdaptiveRollingProfitExitRepository>();
+        var state = await rollingRepository.GetStateAsync(position.Id, ct);
+        if (state?.LastEvaluatedAtUtc is null || state.State != AdaptiveRollingProfitExitState.RidingTrend)
+            return false;
+
+        var maximumStateAgeMs = Math.Max(
+            10_000,
+            Math.Max(adaptiveSettings.MarketDataMaxAgeMs * 2, adaptiveSettings.EvaluationIntervalMs * 5));
+        var stateIsFresh = now - state.LastEvaluatedAtUtc.Value <= TimeSpan.FromMilliseconds(maximumStateAgeMs);
+        var entryNotional = Math.Max(state.EntryNotional, position.AveragePrice * position.Quantity);
+        var trendIsHealthy = state.LastTrendFlowScore >= adaptiveSettings.RideTrendScoreMin;
+        var profitIsProtected = state.LastProjectedNetPnl >= adaptiveSettings.CloseProfitFloor(entryNotional);
+        var shouldExtend = stateIsFresh && trendIsHealthy && profitIsProtected;
+
+        if (shouldExtend && _loggedRideTrendHoldExtensions.Add(position.Id))
+        {
+            logger.LogInformation(
+                "SpotFuturesCrossMarket max hold extended for healthy rolling trend. PositionId={PositionId} ProjectedNetPnl={ProjectedNetPnl:F6} TrendScore={TrendScore:F2} ExtendedUntil={ExtendedUntil:O}",
+                position.Id,
+                state.LastProjectedNetPnl,
+                state.LastTrendFlowScore,
+                extendedHoldUntil);
+        }
+
+        return shouldExtend;
+    }
+
     /// <summary>Places the reduce-only market close, persists order/fills, and settles the position.</summary>
     private async Task<Order?> ExecuteCloseAsync(
         SpotFuturesCrossMarketSettings settings,
@@ -734,6 +794,7 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
         SpotFuturesCrossMarketSettings settings,
         Position position,
         decimal markPrice,
+        bool extendMaxHold,
         out CloseReason closeReason)
     {
         closeReason = CloseReason.None;
@@ -753,7 +814,7 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
             return PositionExitReason.TakeProfit;
         }
 
-        if (position.OpenedAt.HasValue &&
+        if (!extendMaxHold && position.OpenedAt.HasValue &&
             (DateTime.UtcNow - position.OpenedAt.Value).TotalMinutes >= settings.MaxHoldMinutes)
         {
             closeReason = CloseReason.MaxDuration;
@@ -932,6 +993,9 @@ public sealed class SpotFuturesCrossMarketTestnetV1Worker(
             DecidedIntent = decision.ToExecutionIntent(),
             DecisionLabel = decision.Action.ToString(),
             Reason = Truncate(decision.Reason, 4000),
+            EntryGateTraceJson = decision.EntryGateTrace is null
+                ? null
+                : JsonSerializer.Serialize(decision.EntryGateTrace),
             Executed = executed,
             PositionId = positionId,
             LocalOrderId = localOrderId

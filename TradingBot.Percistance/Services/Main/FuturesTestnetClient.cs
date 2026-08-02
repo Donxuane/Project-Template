@@ -27,6 +27,7 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
 
     private readonly HttpClient _httpClient;
     private readonly ILogger<FuturesTestnetClient> _logger;
+    private readonly ITimeSyncService _timeSyncService;
     private readonly string? _apiKey;
     private readonly string? _secretKey;
     private readonly long _recvWindow;
@@ -34,10 +35,12 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
     public FuturesTestnetClient(
         HttpClient httpClient,
         IConfiguration configuration,
-        ILogger<FuturesTestnetClient> logger)
+        ILogger<FuturesTestnetClient> logger,
+        ITimeSyncService timeSyncService)
     {
         _httpClient = httpClient;
         _logger = logger;
+        _timeSyncService = timeSyncService;
         var section = configuration.GetSection("FuturesTestnet");
         _apiKey = section["ApiKey"];
         _secretKey = section["SecretKey"];
@@ -549,7 +552,7 @@ public sealed class FuturesTestnetClient : IFuturesTestnetClient
         if (string.IsNullOrWhiteSpace(_apiKey) || string.IsNullOrWhiteSpace(_secretKey))
             throw new InvalidOperationException("FuturesTestnet credentials are not configured.");
 
-        var timestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var timestampMs = await _timeSyncService.GetAdjustedTimestampAsync(cancellationToken);
         query["timestamp"] = timestampMs.ToString(CultureInfo.InvariantCulture);
         query["recvWindow"] = _recvWindow.ToString(CultureInfo.InvariantCulture);
 

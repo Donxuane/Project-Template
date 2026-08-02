@@ -48,21 +48,20 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
         lock (state.Sync)
         {
             var now = DateTime.UtcNow;
+            // Executable close pricing only depends on the live top of book and depth.
+            // aggTrade can legitimately be quiet on testnet, and mark price is supporting
+            // context; neither should make an otherwise executable book unavailable.
             var requiredTimes = new[]
             {
                 state.LastBookTickerLocalReceiptUtc,
-                state.LastDepthLocalReceiptUtc,
-                state.LastAggTradeLocalReceiptUtc,
-                state.LastMarkPriceLocalReceiptUtc
+                state.LastDepthLocalReceiptUtc
             };
 
             if (requiredTimes.Any(x => !x.HasValue))
             {
-                var missing = new List<string>(4);
+                var missing = new List<string>(2);
                 if (!state.LastBookTickerLocalReceiptUtc.HasValue) missing.Add("bookTicker");
                 if (!state.LastDepthLocalReceiptUtc.HasValue) missing.Add("depth");
-                if (!state.LastAggTradeLocalReceiptUtc.HasValue) missing.Add("aggTrade");
-                if (!state.LastMarkPriceLocalReceiptUtc.HasValue) missing.Add("markPrice");
                 return state.ToInvalidSnapshot($"MissingRequiredStream:{string.Join(",", missing)}", now);
             }
 
@@ -154,12 +153,11 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
                 realizedVolatilityBps = RealizedVolatilityBps(state.Prices.Select(x => x.Price).ToArray());
             }
 
-            var valid = streamLatencyMs <= settings.StreamLatencyDegradedMs;
             return new AdaptiveRollingMarketDataSnapshot
             {
                 Symbol = symbol,
-                IsFresh = valid,
-                DegradedReason = valid ? null : "StreamLatencyHigh",
+                IsFresh = true,
+                DegradedReason = null,
                 BestBidPrice = state.BestBidPrice,
                 BestBidQuantity = state.BestBidQuantity,
                 BestAskPrice = state.BestAskPrice,
@@ -224,7 +222,17 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
         {
             try
             {
+                lock (state.Sync)
+                {
+                    state.Connected = false;
+                }
+
                 await RunSingleConnectionAsync(state, settings, cancellationToken);
+                lock (state.Sync)
+                {
+                    state.Connected = false;
+                    state.LastDisconnectedAtUtc = DateTime.UtcNow;
+                }
                 delayMs = settings.WebSocketReconnectMinDelayMs;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -277,6 +285,7 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
         await socket.ConnectAsync(url, cancellationToken);
         lock (state.Sync)
         {
+            state.ResetForConnection();
             state.Connected = true;
             state.LastConnectedAtUtc = DateTime.UtcNow;
             state.LastError = null;
@@ -372,9 +381,7 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
     private static void ApplyDepth(SymbolSocketState state, JsonElement payload, DateTime receivedAtUtc)
     {
         var finalUpdateId = GetLong(payload, "u");
-        if (state.LastDepthFinalUpdateId > 0 && finalUpdateId > 0 && finalUpdateId <= state.LastDepthFinalUpdateId)
-            state.SequenceInvalid = true;
-        state.LastDepthFinalUpdateId = Math.Max(state.LastDepthFinalUpdateId, finalUpdateId);
+        state.LastDepthFinalUpdateId = finalUpdateId;
 
         state.Bids = ParseLevels(payload, "b", descending: true);
         state.Asks = ParseLevels(payload, "a", descending: false);
@@ -382,8 +389,11 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
         state.LastDepthTransactionTimeUtc = FromUnixMs(GetLong(payload, "T"));
         state.LastDepthLocalReceiptUtc = receivedAtUtc;
 
-        if (state.Bids.Count > 0 && state.Asks.Count > 0 && state.Bids[0].Price >= state.Asks[0].Price)
-            state.SequenceInvalid = true;
+        // depth20 messages replace the complete top-of-book snapshot, so a later
+        // healthy message recovers a transient crossed or malformed snapshot.
+        state.SequenceInvalid = state.Bids.Count > 0 &&
+                                state.Asks.Count > 0 &&
+                                state.Bids[0].Price >= state.Asks[0].Price;
     }
 
     private static void ApplyAggTrade(SymbolSocketState state, JsonElement payload, DateTime receivedAtUtc)
@@ -549,6 +559,34 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
         public DateTime? LastMarkPriceEventTimeUtc { get; set; }
         public DateTime? LastMarkPriceLocalReceiptUtc { get; set; }
 
+        public void ResetForConnection()
+        {
+            SequenceInvalid = false;
+            LastDepthFinalUpdateId = 0;
+            BestBidPrice = 0m;
+            BestBidQuantity = 0m;
+            BestAskPrice = 0m;
+            BestAskQuantity = 0m;
+            MarkPrice = 0m;
+            IndexPrice = 0m;
+            FundingRate = 0m;
+            Bids = [];
+            Asks = [];
+            Trades.Clear();
+            Prices.Clear();
+            LastBookTickerEventTimeUtc = null;
+            LastBookTickerTransactionTimeUtc = null;
+            LastBookTickerLocalReceiptUtc = null;
+            LastDepthEventTimeUtc = null;
+            LastDepthTransactionTimeUtc = null;
+            LastDepthLocalReceiptUtc = null;
+            LastAggTradeEventTimeUtc = null;
+            LastAggTradeTransactionTimeUtc = null;
+            LastAggTradeLocalReceiptUtc = null;
+            LastMarkPriceEventTimeUtc = null;
+            LastMarkPriceLocalReceiptUtc = null;
+        }
+
         public AdaptiveRollingMarketDataSnapshot ToInvalidSnapshot(
             string reason,
             DateTime now,
@@ -566,7 +604,20 @@ public sealed class AdaptiveRollingFuturesMarketDataService(
                 MarkPrice = MarkPrice,
                 IndexPrice = IndexPrice,
                 FundingRate = FundingRate,
-                MarketDataLocalReceiptUtc = now,
+                MarketDataEventTimeUtc = MaxUtc(
+                    LastBookTickerEventTimeUtc,
+                    LastDepthEventTimeUtc,
+                    LastAggTradeEventTimeUtc,
+                    LastMarkPriceEventTimeUtc),
+                MarketDataTransactionTimeUtc = MaxUtc(
+                    LastBookTickerTransactionTimeUtc,
+                    LastDepthTransactionTimeUtc,
+                    LastAggTradeTransactionTimeUtc),
+                MarketDataLocalReceiptUtc = MaxUtc(
+                    LastBookTickerLocalReceiptUtc,
+                    LastDepthLocalReceiptUtc,
+                    LastAggTradeLocalReceiptUtc,
+                    LastMarkPriceLocalReceiptUtc),
                 MarketDataAgeMs = marketDataAgeMs,
                 StreamLatencyMs = streamLatencyMs,
                 LastError = LastError

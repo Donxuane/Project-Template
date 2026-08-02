@@ -42,21 +42,19 @@ public class SpotFuturesCrossMarketSignalEngineTests
     }
 
     [Fact]
-    public void EvidenceMode_QualifiedStrategySetup_IsNotRelabelledAsFallback()
+    public void QualityFilters_ExtremeRsiBreakout_IsRejected()
     {
         var engine = CreateEngine();
-        var settings = BaseSettings() with
-        {
-            EnableTestnetEvidenceEntries = true,
-            LongRsiMax = 100m
-        };
+        var settings = BaseSettings() with { EnableEntryQualityFilters = true };
         var closes = Series(60, 88m, 0.20m);
 
         var decision = engine.Evaluate(settings, Snapshot(closes, closes), openPositionSide: null);
 
-        Assert.Equal(CrossMarketAction.OpenLong, decision.Action);
-        Assert.DoesNotContain("TESTNET_EVIDENCE_FALLBACK", decision.Reason);
-        Assert.Contains("regime confirmed", decision.Reason);
+        Assert.Equal(CrossMarketAction.NoTrade, decision.Action);
+        Assert.Contains("NoQualifiedTrendEntry", decision.Reason);
+        Assert.Equal(
+            EntryGateState.Fail,
+            decision.EntryGateTrace!.Long.Gates.Single(x => x.Gate == "Rsi").State);
     }
 
     [Fact]
@@ -138,7 +136,11 @@ public class SpotFuturesCrossMarketSignalEngineTests
     public void EvidenceMode_ExtremePositiveFunding_SelectsShortProbe()
     {
         var engine = CreateEngine();
-        var settings = BaseSettings() with { EnableTestnetEvidenceEntries = true };
+        var settings = BaseSettings() with
+        {
+            EnableTestnetEvidenceEntries = true,
+            RequireMicrostructureConfirmation = true
+        };
         var closes = Series(60, 88m, 0.20m);
         var snapshot = Snapshot(closes, closes, fundingRate: settings.MaxAbsFundingRateForEntry + 0.0001m);
 
@@ -242,12 +244,18 @@ public class SpotFuturesCrossMarketSignalEngineTests
         public int GetRequiredPeriods(int shortPeriod, int longPeriod) => 2;
 
         public TrendAnalysisResult Analyze(MarketSnapshot marketData, int shortPeriod, int longPeriod)
-            => new()
+        {
+            var isBullish = marketData.ClosePrices[^1] > marketData.ClosePrices[0];
+            var isBearish = marketData.ClosePrices[^1] < marketData.ClosePrices[0];
+            return new TrendAnalysisResult
             {
                 IsValid = true,
-                CurrentTrendState = TrendState.Neutral,
-                ConfidenceScore = 60
+                CurrentTrendState = isBullish ? TrendState.Bullish : isBearish ? TrendState.Bearish : TrendState.Neutral,
+                IsBullishTrendConfirmed = isBullish,
+                IsBearishTrendConfirmed = isBearish,
+                ConfidenceScore = 80
             };
+        }
     }
 
     private sealed class FakeAtrService : IAtrService
